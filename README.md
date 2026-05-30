@@ -430,9 +430,9 @@ end)
 ```lua
 ChrononLabsStreamNet.SendEx ("LargeInventorySync", ply, {
     ChunkSize = 16384,
-    BytesPerSecond = 256 * 1024,
-    BurstBytes = 128 * 1024,
-    Window = 12,
+    BytesPerSecond = 1 * 1024 * 1024,
+    BurstBytes = 512 * 1024,
+    Window = 24,
     RetryInterval = 0.75,
     Timeout = 20,
     MaximumRetries = 16,
@@ -453,10 +453,11 @@ ChrononLabsStreamNet.SendEx ("LargeInventorySync", ply, {
 You can adjust global settings before heavy use:
 
 ```lua
+ChrononLabsStreamNet.SetConfig ("SpeedProfile", "fast")
 ChrononLabsStreamNet.SetConfig ("ChunkSize", 16384)
-ChrononLabsStreamNet.SetConfig ("BytesPerSecond", 256 * 1024)
-ChrononLabsStreamNet.SetConfig ("BurstBytes", 128 * 1024)
-ChrononLabsStreamNet.SetConfig ("Window", 12)
+ChrononLabsStreamNet.SetConfig ("BytesPerSecond", 1 * 1024 * 1024)
+ChrononLabsStreamNet.SetConfig ("BurstBytes", 512 * 1024)
+ChrononLabsStreamNet.SetConfig ("Window", 24)
 ChrononLabsStreamNet.SetConfig ("Timeout", 20)
 ChrononLabsStreamNet.SetConfig ("MaximumRetries", 16)
 ChrononLabsStreamNet.SetConfig ("MaximumIncomingBytesPerPeer", 32 * 1024 * 1024)
@@ -465,7 +466,18 @@ ChrononLabsStreamNet.SetConfig ("RequestTimeout", 15)
 ChrononLabsStreamNet.SetConfig ("ResponseMaxBytes", nil)
 ```
 
-`BytesPerSecond` and `BurstBytes` are per player.
+`SpeedProfile` is global and updates `BytesPerSecond`, `BurstBytes`, and `Window`. Built-in profiles are:
+
+```lua
+conservative = { BytesPerSecond = 96 * 1024, BurstBytes = 64 * 1024, Window = 6 }
+balanced     = { BytesPerSecond = 1 * 1024 * 1024, BurstBytes = 512 * 1024, Window = 24 }
+fast         = { BytesPerSecond = 2 * 1024 * 1024, BurstBytes = 512 * 1024, Window = 32 }
+lightning    = { BytesPerSecond = 3 * 1024 * 1024, BurstBytes = 1 * 1024 * 1024, Window = 48 }
+```
+
+`balanced` is the default. These pacing values are per player; set individual values after `SpeedProfile` if you want to override one knob.
+
+In local testing with a 4 MiB unreliable transfer and 16 KiB chunks, these profiles measured roughly `0.5 MiB/s`, `1 MiB/s`, `2 MiB/s`, and `3 MiB/s` respectively. `lightning` is not recommended for heavily populated servers (`60+` players).
 
 ## Stats
 
@@ -952,9 +964,10 @@ These are global defaults. Set them once before heavy use.
 ```lua
 ChrononLabsStreamNet.SetConfig ("MaximumNetMessageBytes", 60000)
 ChrononLabsStreamNet.SetConfig ("ChunkSize", 16384)
-ChrononLabsStreamNet.SetConfig ("BytesPerSecond", 256 * 1024)
-ChrononLabsStreamNet.SetConfig ("BurstBytes", 128 * 1024)
-ChrononLabsStreamNet.SetConfig ("Window", 12)
+ChrononLabsStreamNet.SetConfig ("SpeedProfile", "balanced")
+ChrononLabsStreamNet.SetConfig ("BytesPerSecond", 1 * 1024 * 1024)
+ChrononLabsStreamNet.SetConfig ("BurstBytes", 512 * 1024)
+ChrononLabsStreamNet.SetConfig ("Window", 24)
 ChrononLabsStreamNet.SetConfig ("RetryInterval", 0.75)
 ChrononLabsStreamNet.SetConfig ("Timeout", 20)
 ChrononLabsStreamNet.SetConfig ("MaximumRetries", 16)

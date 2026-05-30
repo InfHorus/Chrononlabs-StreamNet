@@ -114,12 +114,41 @@ local netReadData      = net.ReadData
 library.Config = library.Config or {}
 local config   = library.Config
 
+library.SpeedProfiles = library.SpeedProfiles or {
+	conservative = {
+		BytesPerSecond = 96 * 1024,
+		BurstBytes     = 64 * 1024,
+		Window         = 6
+	},
+	balanced = {
+		BytesPerSecond = 1 * 1024 * 1024,
+		BurstBytes     = 512 * 1024,
+		Window         = 24
+	},
+	fast = {
+		BytesPerSecond = 2 * 1024 * 1024,
+		BurstBytes     = 512 * 1024,
+		Window         = 32
+	},
+	lightning = {
+		BytesPerSecond = 3 * 1024 * 1024,
+		BurstBytes     = 1 * 1024 * 1024,
+		Window         = 48
+	}
+}
+
+config.SpeedProfile = stringLower (tostring (config.SpeedProfile or "balanced"))
+
+if not library.SpeedProfiles [config.SpeedProfile] then
+	config.SpeedProfile = "balanced"
+end
+
 config.ChannelName                     = config.ChannelName or channelName
 config.MaximumNetMessageBytes          = config.MaximumNetMessageBytes or 60000
 config.ChunkSize                       = config.ChunkSize or 16384
-config.BytesPerSecond                  = config.BytesPerSecond or 256 * 1024
-config.BurstBytes                      = config.BurstBytes or 128 * 1024
-config.Window                          = config.Window or 12
+config.BytesPerSecond                  = config.BytesPerSecond or library.SpeedProfiles [config.SpeedProfile].BytesPerSecond
+config.BurstBytes                      = config.BurstBytes or library.SpeedProfiles [config.SpeedProfile].BurstBytes
+config.Window                          = config.Window or library.SpeedProfiles [config.SpeedProfile].Window
 config.RetryInterval                   = config.RetryInterval or 0.75
 config.Timeout                         = config.Timeout or 20
 config.MaximumRetries                  = config.MaximumRetries or 16
@@ -3303,6 +3332,22 @@ function library.CancelAll (...)
 end
 
 function library.SetConfig (key, value)
+	if key == "SpeedProfile" or key == "speedProfile" then
+		local profileName = lowerName (value)
+		local profile     = library.SpeedProfiles [profileName]
+
+		if not profile then
+			return false, "(ChrononLabs-StreamNet): Unknown SpeedProfile. Use conservative, balanced, fast, or lightning."
+		end
+
+		config.SpeedProfile   = profileName
+		config.BytesPerSecond = profile.BytesPerSecond
+		config.BurstBytes     = profile.BurstBytes
+		config.Window         = profile.Window
+
+		return library
+	end
+
 	config [key] = value
 
 	return library
