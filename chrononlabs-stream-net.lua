@@ -117,8 +117,8 @@ local config   = library.Config
 config.ChannelName                     = config.ChannelName or channelName
 config.MaximumNetMessageBytes          = config.MaximumNetMessageBytes or 60000
 config.ChunkSize                       = config.ChunkSize or 16384
-config.BytesPerSecond                  = config.BytesPerSecond or 98304
-config.BurstBytes                      = config.BurstBytes or 65536
+config.BytesPerSecond                  = config.BytesPerSecond or 256 * 1024
+config.BurstBytes                      = config.BurstBytes or 128 * 1024
 config.Window                          = config.Window or 12
 config.RetryInterval                   = config.RetryInterval or 0.75
 config.Timeout                         = config.Timeout or 20
@@ -2150,19 +2150,22 @@ local function pumpTransfer (state, transfer, currentTime)
 		else
 			local sequence = popNack (transfer)
 			local retry    = false
+			local isNewSequence = false
 
 			if sequence then
 				retry = true
 			else
-				sequence = timedOutSequence (transfer, currentTime)
-
-				if sequence then
-					retry = true
-				elseif transfer.InFlightCount < transfer.Window and transfer.NextSequence <= transfer.TotalChunks then
+				if transfer.InFlightCount < transfer.Window and transfer.NextSequence <= transfer.TotalChunks then
 					sequence              = transfer.NextSequence
-					transfer.NextSequence = transfer.NextSequence + 1
+					isNewSequence         = true
 				else
-					break
+					sequence = timedOutSequence (transfer, currentTime)
+
+					if sequence then
+						retry = true
+					else
+						break
+					end
 				end
 			end
 
@@ -2200,6 +2203,10 @@ local function pumpTransfer (state, transfer, currentTime)
 
 			state.Budget = mathMax (0, state.Budget - usedBytes)
 			sentPackets  = sentPackets + 1
+
+			if isNewSequence then
+				transfer.NextSequence = transfer.NextSequence + 1
+			end
 		end
 	end
 

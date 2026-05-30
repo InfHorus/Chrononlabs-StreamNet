@@ -430,8 +430,8 @@ end)
 ```lua
 ChrononLabsStreamNet.SendEx ("LargeInventorySync", ply, {
     ChunkSize = 16384,
-    BytesPerSecond = 96 * 1024,
-    BurstBytes = 64 * 1024,
+    BytesPerSecond = 256 * 1024,
+    BurstBytes = 128 * 1024,
     Window = 12,
     RetryInterval = 0.75,
     Timeout = 20,
@@ -454,8 +454,8 @@ You can adjust global settings before heavy use:
 
 ```lua
 ChrononLabsStreamNet.SetConfig ("ChunkSize", 16384)
-ChrononLabsStreamNet.SetConfig ("BytesPerSecond", 98304)
-ChrononLabsStreamNet.SetConfig ("BurstBytes", 65536)
+ChrononLabsStreamNet.SetConfig ("BytesPerSecond", 256 * 1024)
+ChrononLabsStreamNet.SetConfig ("BurstBytes", 128 * 1024)
 ChrononLabsStreamNet.SetConfig ("Window", 12)
 ChrononLabsStreamNet.SetConfig ("Timeout", 20)
 ChrononLabsStreamNet.SetConfig ("MaximumRetries", 16)
@@ -952,8 +952,8 @@ These are global defaults. Set them once before heavy use.
 ```lua
 ChrononLabsStreamNet.SetConfig ("MaximumNetMessageBytes", 60000)
 ChrononLabsStreamNet.SetConfig ("ChunkSize", 16384)
-ChrononLabsStreamNet.SetConfig ("BytesPerSecond", 98304)
-ChrononLabsStreamNet.SetConfig ("BurstBytes", 65536)
+ChrononLabsStreamNet.SetConfig ("BytesPerSecond", 256 * 1024)
+ChrononLabsStreamNet.SetConfig ("BurstBytes", 128 * 1024)
 ChrononLabsStreamNet.SetConfig ("Window", 12)
 ChrononLabsStreamNet.SetConfig ("RetryInterval", 0.75)
 ChrononLabsStreamNet.SetConfig ("Timeout", 20)
