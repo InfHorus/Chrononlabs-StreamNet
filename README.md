@@ -6,7 +6,11 @@ It is designed to make networking cleaner, safer, and more reliable across all k
 
 It is not only useful for large payloads. It can also be used as a better organized and more optimized networking layer for normal project communication, while still being powerful enough for complex systems that need guaranteed complete delivery.
 
-<img width="746" height="165" alt="image" src="https://github.com/user-attachments/assets/58829a4e-6ff4-465a-a1b1-bd08f0319a1a" />
+## Benchmark
+vNet vs NetStream vs ChrononLabs-StreamNet - client → server upload, all libraries at stock defaults.
+
+<img width="741" height="190" alt="image" src="https://github.com/user-attachments/assets/89d1a9a0-c2f6-419c-b2b2-0dd7f0158886" />
+
 
 
 ## Why it exists
