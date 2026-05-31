@@ -45,6 +45,7 @@ Instead of writing a custom chunking and retry system in every project, you get 
 - Optional compression with `util.Compress` and `CompressAt`.
 - Raw binary streaming with `SendRaw` when you already have your own encoded format.
 - Structured argument serialization for nil, booleans, numbers, strings, tables, Vector, Angle, Color, and Entity values.
+- Pure-Lua IEEE-754 binary64 double encoding for floating point and non-Int32 Lua numbers, avoiding file-backed `File:WriteDouble` and `File:ReadDouble` serialization workarounds.
 - Serializer safety limits with `MaximumTablePairs` and `MaximumTableDepth`.
 - Payload size protection with `MaximumPayloadBytes` and safe chunk sizing.
 - ACK/NACK recovery, where received chunks are confirmed, and missing or corrupted chunks are requested again.
