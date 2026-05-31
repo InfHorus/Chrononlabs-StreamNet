@@ -35,7 +35,7 @@ Instead of writing a custom chunking and retry system in every project, you get 
 - Automatic payload chunking for messages that exceed normal net comfort limits.
 - Per-peer pacing with `BytesPerSecond`, `BurstBytes`, `Window`, and `MaximumPacketsPerThink`.
 - Congestion control for unreliable transfers, so aggressive sends can back off instead of flooding weak links.
-- Up to around 3x faster than GMod's default `net` library and other networking libraries such as NetStream and VNet in local large-payload tests.
+- Up to around 3x faster than other large-payload networking libraries such as NetStream and VNet in local tests.
 - Transfer priority with `Priority = "high"`, `Priority = "normal"`, and `Priority = "low"`.
 - Priority aging with `PriorityAgingInterval` so lower priority transfers still get chances to send.
 - Optional compression with `util.Compress` and `CompressAt`.
