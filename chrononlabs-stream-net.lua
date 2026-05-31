@@ -164,6 +164,9 @@ config.NackInterval                    = config.NackInterval or 0.35
 config.AckBatch                        = config.AckBatch or 64
 config.NackBatch                       = config.NackBatch or 64
 config.MaximumPacketsPerThink          = config.MaximumPacketsPerThink or 24
+config.CongestionControl               = config.CongestionControl ~= false
+config.InitialCongestionWindow         = config.InitialCongestionWindow or 4
+config.MinCongestionWindow             = config.MinCongestionWindow or 2
 config.FinishedIncomingTtl             = config.FinishedIncomingTtl or mathMax (config.Timeout, 30)
 config.MaximumFinishedIncomingPerPeer  = config.MaximumFinishedIncomingPerPeer or 256
 config.FinishedControlResendInterval   = config.FinishedControlResendInterval or 0.25
@@ -1338,6 +1341,9 @@ local function buildTransferFromPrepared (prepared, peer)
 		Timeout               = prepared.Timeout,
 		MaximumRetries        = prepared.MaximumRetries,
 		Window                = prepared.Window,
+		CongestionWindow      = mathMin (prepared.Window, mathMax (1, tonumber (config.InitialCongestionWindow) or 4)),
+		SlowStartThreshold    = prepared.Window,
+		CongestionRecoveryMarker = 0,
 		ReliableData          = prepared.ReliableData,
 		Priority              = prepared.Priority,
 		PriorityName          = prepared.PriorityName,
@@ -2183,8 +2189,22 @@ local function pumpTransfer (state, transfer, currentTime)
 
 			if sequence then
 				retry = true
+
+				if config.CongestionControl and not transfer.ReliableData and transfer.CongestionRecoveryMarker == 0 then
+					local threshold = mathMax (mathMax (1, tonumber (config.MinCongestionWindow) or 2), mathFloor ((transfer.CongestionWindow or transfer.Window) / 2))
+
+					transfer.SlowStartThreshold       = threshold
+					transfer.CongestionWindow         = threshold
+					transfer.CongestionRecoveryMarker = mathMax (0, transfer.NextSequence - 1)
+				end
 			else
-				if transfer.InFlightCount < transfer.Window and transfer.NextSequence <= transfer.TotalChunks then
+				local effectiveWindow = transfer.Window
+
+				if config.CongestionControl and not transfer.ReliableData then
+					effectiveWindow = mathMin (transfer.Window, mathFloor (transfer.CongestionWindow or transfer.Window))
+				end
+
+				if transfer.InFlightCount < effectiveWindow and transfer.NextSequence <= transfer.TotalChunks then
 					sequence              = transfer.NextSequence
 					isNewSequence         = true
 				else
@@ -2192,6 +2212,14 @@ local function pumpTransfer (state, transfer, currentTime)
 
 					if sequence then
 						retry = true
+
+						if config.CongestionControl and not transfer.ReliableData and transfer.CongestionRecoveryMarker == 0 then
+							local threshold = mathMax (mathMax (1, tonumber (config.MinCongestionWindow) or 2), mathFloor ((transfer.CongestionWindow or transfer.Window) / 2))
+
+							transfer.SlowStartThreshold       = threshold
+							transfer.CongestionWindow         = mathMin (transfer.Window, mathMax (1, tonumber (config.InitialCongestionWindow) or 4))
+							transfer.CongestionRecoveryMarker = mathMax (0, transfer.NextSequence - 1)
+						end
 					else
 						break
 					end
@@ -2649,6 +2677,32 @@ local function onAckPacket (peer)
 			if transfer.InFlight [sequence] then
 				transfer.InFlight [sequence] = nil
 				transfer.InFlightCount       = mathMax (0, transfer.InFlightCount - 1)
+			end
+
+			if config.CongestionControl and not transfer.ReliableData then
+				local marker  = transfer.CongestionRecoveryMarker or 0
+				local canGrow = true
+
+				if marker ~= 0 then
+					if sequence > marker then
+						transfer.CongestionRecoveryMarker = 0
+					else
+						canGrow = false
+					end
+				end
+
+				if canGrow then
+					local congestionWindow   = transfer.CongestionWindow or transfer.Window
+					local slowStartThreshold = transfer.SlowStartThreshold or transfer.Window
+
+					if congestionWindow < slowStartThreshold then
+						congestionWindow = congestionWindow + 1
+					else
+						congestionWindow = congestionWindow + 1 / mathMax (1, congestionWindow)
+					end
+
+					transfer.CongestionWindow = mathMin (transfer.Window, congestionWindow)
+				end
 			end
 		end
 	end
