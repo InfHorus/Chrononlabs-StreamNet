@@ -2944,33 +2944,21 @@ function library.Tick ()
 	do
 		local maximumDeliveries = mathMax (1, mathFloor (tonumber (config.MaximumCompletionsPerThink) or 16))
 		local delivered         = 0
+		local keys              = {}
 
-		while delivered < maximumDeliveries do
-			local keys = {}
-
-			for key, ready in pairs (library.ReadyIncoming) do
-				if ready and ready.Head <= #ready.Order then
-					keys [#keys + 1] = key
-				else
-					library.ReadyIncoming [key] = nil
-				end
+		for key, ready in pairs (library.ReadyIncoming) do
+			if ready and ready.Head <= #ready.Order then
+				keys [#keys + 1] = key
+			else
+				library.ReadyIncoming [key] = nil
 			end
+		end
 
-			tableSort (keys, function (left, right)
-				local leftType  = type (left)
-				local rightType = type (right)
+		tableSort (keys)
 
-				if leftType == rightType then
-					return left < right
-				end
+		local keyCount = #keys
 
-				return tostring (left) < tostring (right)
-			end)
-
-			local keyCount = #keys
-
-			if keyCount == 0 then break end
-
+		if keyCount > 0 then
 			local keyIndex = 1
 			local lastKey  = library.LastReadyIncomingKey
 
@@ -2983,50 +2971,53 @@ function library.Tick ()
 				end
 			end
 
-			local scannedKeys  = 0
-			local madeDelivery = false
+			local scansWithoutDelivery = 0
 
-			while scannedKeys < keyCount and delivered < maximumDeliveries do
+			while scansWithoutDelivery < keyCount and delivered < maximumDeliveries do
 				local key   = keys [keyIndex]
 				local ready = library.ReadyIncoming [key]
+				local didDeliver = false
 
 				if ready then
 					local order = ready.Order
+					local length = #order
+					local peer = peerFromKey (key)
+					local valid = CLIENT or isPlayerValue (peer)
+					local bucket = valid and library.IncomingStates [key] or nil
 
-					while ready.Head <= #order do
+					if not valid then
+						library.ReadyIncoming [key] = nil
+					end
+
+					while valid and ready.Head <= length do
 						local transferId = order [ready.Head]
-						order [ready.Head] = nil
 						ready.Head = ready.Head + 1
 
-						local peer     = peerFromKey (key)
-						local valid    = CLIENT or isPlayerValue (peer)
-						local bucket   = library.IncomingStates [key]
 						local incoming = bucket and bucket [transferId]
 
-						if valid and bucket and incoming and incoming.ReadyToDeliver then
-							if ready.Head > #order then
-								library.ReadyIncoming [key] = nil
-							end
-
+						if bucket and incoming and incoming.ReadyToDeliver then
 							deliverIncoming (peer, bucket, incoming)
 
 							delivered = delivered + 1
 							library.LastReadyIncomingKey = key
-							madeDelivery = true
+							didDeliver = true
 							break
 						end
 					end
 
-					if ready.Head > #order then
+					if ready.Head > length then
 						library.ReadyIncoming [key] = nil
 					end
 				end
 
-				keyIndex = keyIndex % keyCount + 1
-				scannedKeys = scannedKeys + 1
-			end
+				if didDeliver then
+					scansWithoutDelivery = 0
+				else
+					scansWithoutDelivery = scansWithoutDelivery + 1
+				end
 
-			if not madeDelivery then break end
+				keyIndex = keyIndex % keyCount + 1
+			end
 		end
 	end
 
