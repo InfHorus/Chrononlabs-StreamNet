@@ -38,6 +38,7 @@ Instead of writing a custom chunking and retry system in every project, you get 
 - Cleaner structure than manually managing `net.Start`, `net.Write*`, and `net.Receive`.
 - Automatic payload chunking for messages that exceed normal net comfort limits.
 - Per-peer pacing with `BytesPerSecond`, `BurstBytes`, `Window`, and `MaximumPacketsPerThink`.
+- Deferred completion handling with `MaximumCompletionsPerThink`, so many finished transfers do not all decode and call handlers in the same net receive frame.
 - Congestion control for unreliable transfers, so aggressive sends can back off instead of flooding weak links.
 - Up to around 3x faster than other large-payload networking libraries such as NetStream and VNet in local tests.
 - Transfer priority with `Priority = "high"`, `Priority = "normal"`, and `Priority = "low"`.
@@ -993,6 +994,7 @@ ChrononLabsStreamNet.SetConfig ("NackInterval", 0.35)
 ChrononLabsStreamNet.SetConfig ("AckBatch", 64)
 ChrononLabsStreamNet.SetConfig ("NackBatch", 64)
 ChrononLabsStreamNet.SetConfig ("MaximumPacketsPerThink", 24)
+ChrononLabsStreamNet.SetConfig ("MaximumCompletionsPerThink", 16)
 ChrononLabsStreamNet.SetConfig ("FinishedIncomingTtl", 30)
 ChrononLabsStreamNet.SetConfig ("MaximumFinishedIncomingPerPeer", 256)
 ChrononLabsStreamNet.SetConfig ("FinishedControlResendInterval", 0.25)

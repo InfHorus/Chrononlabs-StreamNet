@@ -164,6 +164,7 @@ config.NackInterval                    = config.NackInterval or 0.35
 config.AckBatch                        = config.AckBatch or 64
 config.NackBatch                       = config.NackBatch or 64
 config.MaximumPacketsPerThink          = config.MaximumPacketsPerThink or 24
+config.MaximumCompletionsPerThink      = config.MaximumCompletionsPerThink or 16
 config.CongestionControl               = config.CongestionControl ~= false
 config.InitialCongestionWindow         = config.InitialCongestionWindow or 4
 config.MinCongestionWindow             = config.MinCongestionWindow or 2
@@ -185,6 +186,7 @@ library.ReceivePolicyState 	= library.ReceivePolicyState or {}
 library.OutgoingStates     	= library.OutgoingStates or {}
 library.IncomingStates     	= library.IncomingStates or {}
 library.FinishedIncoming    = library.FinishedIncoming or {}
+library.ReadyIncoming       = library.ReadyIncoming or {}
 library.HeaderRejectBuckets = library.HeaderRejectBuckets or {}
 library.AckPending          = library.AckPending or {}
 library.NackPending         = library.NackPending or {}
@@ -2654,8 +2656,21 @@ local function onDataPacket (peer)
 
 	queueAck (peer, transferId, sequence)
 
-	if incoming.Received == incoming.TotalChunks then
-		deliverIncoming (peer, bucket, incoming)
+	if incoming.Received == incoming.TotalChunks and not incoming.ReadyToDeliver then
+		incoming.ReadyToDeliver = true
+
+		local ready = library.ReadyIncoming [key]
+
+		if not ready then
+			ready = {
+				Order = {},
+				Head  = 1
+			}
+
+			library.ReadyIncoming [key] = ready
+		end
+
+		ready.Order [#ready.Order + 1] = transferId
 	end
 end
 
@@ -2855,9 +2870,10 @@ local function flushIncomingMaintenance (currentTime)
 			library.IncomingStates [key] = nil
 			library.IncomingCounts [key] = nil
 			library.IncomingBytes [key]  = nil
+			library.ReadyIncoming [key]  = nil
 		else
 			for transferId, incoming in pairs (bucket) do
-				if currentTime - incoming.UpdatedAt > config.Timeout then
+				if not incoming.ReadyToDeliver and currentTime - incoming.UpdatedAt > config.Timeout then
 					failIncoming (peer, bucket, incoming, "(ChrononLabs-StreamNet): Incoming timeout. Increase Timeout, reduce payload size, or lower pacing pressure.")
 				elseif currentTime >= incoming.NextNack and incoming.Received < incoming.TotalChunks then
 					local highest = incoming.HighestReceivedSequence or 0
@@ -2924,6 +2940,96 @@ function library.Tick ()
 
 	flushOutgoing (currentTime)
 	flushIncomingMaintenance (currentTime)
+
+	do
+		local maximumDeliveries = mathMax (1, mathFloor (tonumber (config.MaximumCompletionsPerThink) or 16))
+		local delivered         = 0
+
+		while delivered < maximumDeliveries do
+			local keys = {}
+
+			for key, ready in pairs (library.ReadyIncoming) do
+				if ready and ready.Head <= #ready.Order then
+					keys [#keys + 1] = key
+				else
+					library.ReadyIncoming [key] = nil
+				end
+			end
+
+			tableSort (keys, function (left, right)
+				local leftType  = type (left)
+				local rightType = type (right)
+
+				if leftType == rightType then
+					return left < right
+				end
+
+				return tostring (left) < tostring (right)
+			end)
+
+			local keyCount = #keys
+
+			if keyCount == 0 then break end
+
+			local keyIndex = 1
+			local lastKey  = library.LastReadyIncomingKey
+
+			if lastKey ~= nil then
+				for candidateIndex = 1, keyCount do
+					if keys [candidateIndex] == lastKey then
+						keyIndex = candidateIndex % keyCount + 1
+						break
+					end
+				end
+			end
+
+			local scannedKeys  = 0
+			local madeDelivery = false
+
+			while scannedKeys < keyCount and delivered < maximumDeliveries do
+				local key   = keys [keyIndex]
+				local ready = library.ReadyIncoming [key]
+
+				if ready then
+					local order = ready.Order
+
+					while ready.Head <= #order do
+						local transferId = order [ready.Head]
+						order [ready.Head] = nil
+						ready.Head = ready.Head + 1
+
+						local peer     = peerFromKey (key)
+						local valid    = CLIENT or isPlayerValue (peer)
+						local bucket   = library.IncomingStates [key]
+						local incoming = bucket and bucket [transferId]
+
+						if valid and bucket and incoming and incoming.ReadyToDeliver then
+							if ready.Head > #order then
+								library.ReadyIncoming [key] = nil
+							end
+
+							deliverIncoming (peer, bucket, incoming)
+
+							delivered = delivered + 1
+							library.LastReadyIncomingKey = key
+							madeDelivery = true
+							break
+						end
+					end
+
+					if ready.Head > #order then
+						library.ReadyIncoming [key] = nil
+					end
+				end
+
+				keyIndex = keyIndex % keyCount + 1
+				scannedKeys = scannedKeys + 1
+			end
+
+			if not madeDelivery then break end
+		end
+	end
+
 	sweepFinishedIncoming (currentTime)
 	sweepPendingRequests (currentTime)
 
@@ -3506,6 +3612,7 @@ if SERVER then
 		library.OutgoingStates [key]     = nil
 		library.IncomingStates [key]     = nil
 		library.FinishedIncoming [key]   = nil
+		library.ReadyIncoming [key]      = nil
 		library.HeaderRejectBuckets [key] = nil
 		library.IncomingCounts [key]     = nil
 		library.IncomingBytes [key]      = nil
