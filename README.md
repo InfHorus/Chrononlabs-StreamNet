@@ -2,32 +2,25 @@
 
 ChrononLabs-StreamNet is a lightweight, optimized, single-file streaming networking library for Garry's Mod.
 
-It is designed to make networking cleaner, safer, and more reliable across all kinds of projects. You can use it for simple addon messages, structured data sync, raw binary transfers, or very large payloads that would normally be painful to handle with the default `net` library.
-
-It is not only useful for large payloads. It can also be used as a better organized and more optimized networking layer for normal project communication, while still being powerful enough for complex systems that need guaranteed complete delivery.
+It makes networking cleaner, safer, and more reliable across all kinds of projects. Use it for simple addon messages, structured data sync, raw binary transfers, or very large payloads that would normally be painful with the default `net` library. It works just as well as a better-organized, more optimized layer for everyday project communication.
 
 ## Benchmark
-vNet vs NetStream vs ChrononLabs-StreamNet - client → server upload, all libraries at stock defaults.
+
+vNet vs NetStream vs ChrononLabs-StreamNet, client to server upload, all libraries at stock defaults.
 
 <img width="741" height="190" alt="image" src="https://github.com/user-attachments/assets/89d1a9a0-c2f6-419c-b2b2-0dd7f0158886" />
 
-
-
 ## Why it exists
 
-Garry's Mod networking is fine for small one off messages, but it gets painful when an addon needs larger data, safer client messages, progress tracking, retries, or cleaner control over how data is sent.
+Garry's Mod `net` is fine for small one-off messages, but it gets painful when an addon needs larger data, safer client messages, progress tracking, retries, or cleaner control over how data is sent. The normal system has a practical limit around 64 KB per message.
 
-The normal net system has a practical message limit around 64 KB. ChrononLabs-StreamNet uses streamed chunks, so the default payload limit is 8 MB and can be changed for trusted use cases. It also paces the transfer, checks the data, retries missing chunks, and rebuilds the full payload before your callback runs.
+ChrononLabs-StreamNet streams data in chunks (default payload limit 8 MB, raisable for trusted use cases), paces the transfer, validates the data, retries missing chunks, and rebuilds the full payload before your callback runs. On top of that you get receive policies, priority, compression, progress callbacks, cancellation, timeout handling, stats, and one API for both client→server and server→client messages.
 
-This is useful for inventory data, save data, debug dumps, admin tools, UI state, generated cache data, raw binary data, and other addon systems where normal net messages start to feel too limited or messy.
+Those same features help keep your server networking under control. Direction policies, `MaxBytes`, `MaxInFlight`, cooldowns, ready checks, checksums, retries, timeouts, and duplicate protection all reduce common mistakes and abuse cases like spam, oversized payloads, corrupted chunks, repeated sends, and wrong-way messages.
 
-It is not just about large payloads either. The library also gives you receive policies, priority, compression, progress callbacks, cancellation, timeout handling, stats, and one simple API for both client to server and server to client messages.
+This does **not** replace an anticheat, permission checks, or server-side validation. You still need to check what a client is allowed to do. It just gives you a safer transport to build on, so your addon code can focus on the data instead of re-implementing chunking and retries in every project.
 
-Those features also help keep your server networking under control. Direction policies, `MaxBytes`, `MaxInFlight`, cooldowns, ready checks, checksums, retries, timeouts, and duplicate protection all reduce common mistakes and abuse cases like spam, oversized payloads, corrupted chunks, repeated sends, and wrong way messages.
-
-This does not replace an anticheat, permission checks, or normal server side validation. You still need to check what the client is allowed to do. ChrononLabs-StreamNet just gives you a safer base to build that networking on.
-
-Instead of writing a custom chunking and retry system in every project, you get one shared layer that handles the transport work and lets your addon code focus on the data it actually wants to send.
+Useful for inventory data, save data, debug dumps, admin tools, UI state, generated cache data, raw binary data, anticheat reports, AI telemetry, file-like transfers, and any addon where normal net messages start to feel too limited or messy.
 
 ## Main advantages
 
@@ -76,18 +69,6 @@ Instead of writing a custom chunking and retry system in every project, you get 
 - Receive `MaxPerWindow` policies to limit accepted transfer starts per peer and message over a sliding time window.
 - Useful for basic addons, advanced systems, admin tools, anticheat systems, AI telemetry, save systems, and file-like transfers.
 
-## Delivery model
-
-ChrononLabs-StreamNet provides guaranteed complete delivery semantics.
-
-A message is only delivered to your callback once the full payload has been received, validated, assembled, and decompressed if needed.
-
-If a chunk is missing, it can be requested again. If the transfer cannot recover, it fails instead of silently delivering incomplete or corrupted data.
-
-This makes it useful for systems where partial delivery is not acceptable.
-
-Note about CRC: it catches accidental corruption / mismatch payload, not "malicious" tampering, therefore you should keep validating client data server side always.
-
 ## Installation
 
 Place the file somewhere shared, for example:
@@ -96,21 +77,26 @@ Place the file somewhere shared, for example:
 lua/autorun/chrononlabs-stream-net.lua
 ```
 
-The file handles client distribution automatically when loaded server-side.
+The file handles client distribution automatically when loaded server-side. No `util.AddNetworkString` calls are needed. Message names are managed internally.
 
-## Basic usage
+## Delivery model
 
-### Server
+ChrononLabs-StreamNet provides **guaranteed complete delivery**: a message reaches your callback only after the full payload has been received, validated, assembled, and decompressed if needed. Missing chunks are requested again; if a transfer cannot recover, it **fails** instead of silently delivering incomplete or corrupted data. This makes it suitable for systems where partial delivery is not acceptable.
+
+> **CRC note:** checksums catch accidental corruption / payload mismatch, not malicious tampering. Always keep validating client data server-side.
+
+## Quick start
+
+**Server**
 
 ```lua
 ChrononLabsStreamNet.Receive ("ClientHello", function (ply, message)
     print ("Client said:", ply, message)
-
     ChrononLabsStreamNet.Send ("ServerReply", ply, "Hello from the server")
 end)
 ```
 
-### Client
+**Client**
 
 ```lua
 ChrononLabsStreamNet.Receive ("ServerReply", function (message)
@@ -120,13 +106,112 @@ end)
 ChrononLabsStreamNet.Send ("ClientHello", "Hello from the client")
 ```
 
-## Recommended patterns
+Receive callbacks get `(ply, ...)` on the server and `(...)` on the client. `Send` on the server takes the target player after the name; on the client it does not.
 
-These examples show how the newer safety and control features fit together in normal addon code.
+## The API at a glance
 
-### Safe client upload
+| Call | Use it when |
+| --- | --- |
+| `Send (name, [target], ...)` | Small structured message, no options needed. |
+| `SendEx (name, [target], options, ...)` | A structured send that needs priority, compression, progress, timeout, or custom pacing. |
+| `SendRaw (name, [target], bytes, options)` | You already have bytes/JSON/compressed data/file data/your own format. |
+| `Broadcast (name, ...)` | Server sends the same structured message to every player. |
+| `BroadcastEx (name, options, ...)` | A broadcast that needs options, a profile, or `OnAllComplete`. |
+| `Request (name, [target], data, options, cb)` | One side asks one peer for data and expects exactly one answer. |
+| `Respond (name, policy, cb)` | The other end of a `Request`. |
+| `Replicate / OnReplicated / GetReplicated` | Server owns a value current and future clients should cache. |
+| `Receive (name, [policy], cb)` | Register a handler, optionally with safety limits. |
+| `GetTransfer / GetTransfers` | Inspect running outgoing transfers (for UI/debug). |
+| `Cancel / CancelAll` | Stop running outgoing transfers. |
+| `GetStats / ResetMetrics` | Read or reset runtime metrics. |
+| `DefineProfile` | Reuse a policy/options table by name. |
+| `SetConfig` | Change global defaults. |
 
-Use a receive policy for messages that come from clients. The transport can prove the payload arrived, but your server still has to decide if the player is allowed to send it.
+`options` and `policy` arguments can be either an inline table or the name of a profile (see [Profiles](#profiles)). `Receive` is also exposed as `On` and `Register`.
+
+## Sending data
+
+### Structured values: `Send` / `SendEx`
+
+`Send` serializes nil, booleans, numbers, strings, tables, `Vector`, `Angle`, `Color`, and `Entity` values automatically.
+
+```lua
+-- Server → one client
+ChrononLabsStreamNet.Send ("PlayerData", ply, {
+    Name = "Player",
+    Level = 25,
+    Position = Vector (100, 200, 300),
+    Stats = { Health = 100, Armor = 50 }
+})
+```
+
+`SendEx` is the same but takes an options table (or profile name) before the payload:
+
+```lua
+ChrononLabsStreamNet.SendEx ("MenuState", ply, {
+    Priority = "high",
+    Compress = true
+}, menuState)
+```
+
+> Functions cannot be serialized. To send tables that may contain functions (e.g. `hook.GetTable ()`), sanitize them first, see [the worked example](#example-2-large-sanitized-debug-dump).
+
+### Raw bytes: `SendRaw`
+
+Use raw mode when you already have an encoded format, a compressed blob, generated file content, or any binary payload.
+
+```lua
+-- Client → server
+local data = string.rep ("A", 300000)
+
+ChrononLabsStreamNet.SendRaw ("UploadBlob", data, {
+    ChunkSize = 16384,
+    BytesPerSecond = 128 * 1024,
+    Window = 8,
+    OnComplete = function (ok, reason)
+        print ("Upload complete:", ok, reason)
+    end
+})
+```
+
+```lua
+-- Server
+ChrononLabsStreamNet.Receive ("UploadBlob", function (ply, bytes)
+    print ("Received upload from", ply, "size:", #bytes)
+end)
+```
+
+### Broadcasting (server only)
+
+```lua
+ChrononLabsStreamNet.Broadcast ("GlobalAnnouncement", {
+    Title = "Server Update",
+    Message = "A new system has been loaded."
+})
+
+ChrononLabsStreamNet.BroadcastEx ("GlobalConfig", {
+    OnAllComplete = function (summary)
+        print ("Broadcast done:", summary.Completed, "failed:", summary.Failed)
+    end
+}, configTable)
+```
+
+### Multiple targets and `OnAllComplete`
+
+`SendEx` and `SendRaw` accept a player table as the target. `OnAllComplete` fires once after every resolved target finishes:
+
+```lua
+ChrononLabsStreamNet.SendEx ("BigConfig", players, {
+    OnAllComplete = function (summary)
+        print ("Done:", summary.Completed, "failed:", summary.Failed)
+        PrintTable (summary.Results)
+    end
+}, configTable)
+```
+
+## Receiving safely (receive policies)
+
+`Receive` accepts an optional policy table before the callback, for messages that need stricter limits than the global defaults. All fields are optional.
 
 ```lua
 ChrononLabsStreamNet.Receive ("AvatarUpload", {
@@ -142,176 +227,21 @@ ChrononLabsStreamNet.Receive ("AvatarUpload", {
 end)
 ```
 
-### Priority with a real use
+| Field | Effect |
+| --- | --- |
+| `Direction` | `any`, `client_to_server`, or `server_to_client`. |
+| `MaxBytes` | Caps the original payload size **before** compression. |
+| `MaxInFlight` | Limits active incoming transfers for that message, per peer. |
+| `Cooldown` | Minimum seconds between accepted starts of that message, per peer. |
+| `RequireReady` | Server waits until the joining client has sent the internal ready signal. |
+| `RequireUsergroup` | Server-side gate for client→server messages. `admin` uses `IsAdmin()`, `superadmin` uses `IsSuperAdmin()`, custom groups compare case-insensitively against `GetUserGroup()`. |
+| `MaxPerWindow` | `{ Limit, Window }`, caps accepted starts per peer/message over a sliding time window. |
 
-Use high priority for data the player is waiting on right now, like menu state. Use low priority for work that can wait, like debug dumps or cache data.
-
-```lua
-ChrononLabsStreamNet.SendEx ("MenuState", ply, {
-    Priority = "high",
-    Compress = true
-}, menuState)
-
-ChrononLabsStreamNet.SendRaw ("DebugDump", ply, debugJson, {
-    Priority = "low",
-    Compress = true
-})
-```
-
-Try not to mark every large transfer as high priority. If everything is high priority, nothing really is!
-
-### Request/response
-
-Use `Request` and `Respond` when one side asks for data and expects exactly one answer. The library creates the internal request/reply messages, correlates the reply, enforces the timeout, and ignores duplicate or late replies.
-
-#### Client asks the server
-
-```lua
-ChrononLabsStreamNet.Request ("GetInventory", {
-    IncludeEquipment = true
-}, {
-    Timeout = 10
-}, function (ok, responseOrReason)
-    if not ok then
-        print ("Inventory request failed:", responseOrReason)
-        return
-    end
-
-    PrintTable (responseOrReason)
-end)
-```
-
-```lua
-ChrononLabsStreamNet.Respond ("GetInventory", {
-    Direction = "client_to_server",
-    Cooldown = 1,
-    MaxBytes = 4096
-}, function (ply, request, reply)
-    if not IsValid (ply) then
-        reply (false, "invalid player")
-        return
-    end
-
-    if not CanOpenInventory (ply) then
-        reply (false, "not allowed")
-        return
-    end
-
-    reply (true, {
-        Items = BuildInventory (ply),
-        Equipment = request.IncludeEquipment and BuildEquipment (ply) or nil
-    })
-end)
-```
-
-#### Server asks one client
-
-```lua
-ChrononLabsStreamNet.Request ("GetClientState", ply, {
-    IncludeHud = true
-}, {
-    Timeout = 5
-}, function (ok, responseOrReason)
-    if not ok then
-        print ("Client state request failed:", responseOrReason)
-        return
-    end
-
-    PrintTable (responseOrReason)
-end)
-```
-
-```lua
-ChrononLabsStreamNet.Respond ("GetClientState", {
-    Direction = "server_to_client",
-    MaxBytes = 16 * 1024
-}, function (request, reply)
-    reply (true, BuildClientState (request))
-end)
-```
-
-`Request` is point to point. On the server, pass exactly one valid player target. The request payload is one value, while replies can return multiple values with `reply (true, ...)` or fail logically with `reply (false, reason, ...)`.
-
-`Timeout` in `Request` options is the round trip request timeout, not the transport timeout. `OnComplete` is reserved internally for request delivery tracking, but `OnProgress` is allowed if the request upload itself is large enough to show progress.
-
-### Large transfer with progress
-
-This is a good base pattern for file like data, large JSON, generated cache data, or admin tools.
-
-```lua
-local transferId = ChrononLabsStreamNet.SendRaw ("MapCache", ply, cacheBytes, {
-    Priority = "normal",
-    Compress = true,
-    ChunkSize = 16384,
-    BytesPerSecond = 128 * 1024,
-    Window = 8,
-    ProgressInterval = 0.25,
-    OnProgress = function (transfer)
-        print ("Map cache progress:", transfer.AckCount .. "/" .. transfer.TotalChunks)
-    end,
-    OnComplete = function (ok, reason, transfer)
-        print ("Map cache finished:", ok, reason)
-    end
-})
-
-if not transferId then
-    print ("Map cache could not start")
-end
-```
-
-### Which call to use
-
-Use `Send` for small structured messages.
-
-Use `SendEx` when you want options like priority, compression, progress, timeout, or custom pacing.
-
-Use `SendRaw` when you already have bytes, JSON, compressed data, file data, or your own encoded format.
-
-Use `Broadcast` when the server sends the same structured message to every player.
-
-Use `BroadcastEx` when a broadcast needs options, profiles, or `OnAllComplete`.
-
-Use `Request` and `Respond` when one side needs to ask one peer for a result.
-
-Use `Replicate`, `OnReplicated`, and `GetReplicated` when the server owns a value that current and future clients should cache.
-
-Use a receive policy when the message needs safety limits.
-
-Use `OnProgress` with `Cancel` or `CancelAll` when transfers should be shown in a UI or stopped by the user.
-
-For server multi-target `SendEx` or `SendRaw` calls, `OnAllComplete` fires after every resolved target finishes:
-
-```lua
-ChrononLabsStreamNet.SendEx ("BigConfig", players, {
-    OnAllComplete = function (summary)
-        print ("Done:", summary.Completed, "failed:", summary.Failed)
-        PrintTable (summary.Results)
-    end
-}, configTable)
-```
-
-## Replicated values
-
-Replicated values are server-owned cached values for clients, useful for config, shop data, rules, HUD state, or other large tables that late joiners must receive.
-
-```lua
--- Server
-ChrononLabsStreamNet.Replicate ("ServerConfig", configTable)
-ChrononLabsStreamNet.ClearReplicated ("ServerConfig")
-
--- Client
-ChrononLabsStreamNet.OnReplicated ("ServerConfig", function (value, name, cleared)
-    print ("Config changed:", name, cleared)
-end)
-
-local config = ChrononLabsStreamNet.GetReplicated ("ServerConfig", {})
-```
-
-Calling `Replicate(name, nil)` clears that replicated value. `OnReplicated` fires on initial delivery and later updates. If a transfer ultimately fails, the client may stay stale until the server calls `Replicate` again.
+The transport can prove a payload arrived intact; it cannot decide whether the player was allowed to send it. Always keep your own permission and sanity checks.
 
 ## Profiles
 
-Profiles let you reuse common receive policy and send option defaults without repeating the same table everywhere which is super convenient.
+Profiles let you define a policy/options table once and reuse it by name, instead of repeating the same table everywhere.
 
 ```lua
 ChrononLabsStreamNet.DefineProfile ("SmallClientAction", {
@@ -329,653 +259,205 @@ end)
 
 -- Client
 ChrononLabsStreamNet.SendEx ("UseItem", "SmallClientAction", itemId)
-
-ChrononLabsStreamNet.DefineProfile ("LargeState", {
-    Priority = "normal",
-    Compress = true,
-    Timeout = 30
-})
-
--- Server
-ChrononLabsStreamNet.SendEx ("InventoryState", ply, "LargeState", data)
 ```
 
-`Receive`, `SendEx`, `SendRaw`, `BroadcastEx`, `Request`, and `Respond` can take a profile name where they normally take a policy/options table. `Send` and `Broadcast` don't take profiles because those calls don't have an options slot.
+`Receive`, `SendEx`, `SendRaw`, `BroadcastEx`, `Request`, and `Respond` accept a profile name anywhere they take a policy/options table. `Send` and `Broadcast` don't take profiles because they have no options slot.
 
-## Receive policy
+## Request / Response
 
-`Receive` can also take an optional policy table before the callback. This is useful when one message needs stricter limits than the global defaults.
+Use `Request`/`Respond` when one side asks for data and expects exactly one answer. The library creates the internal request/reply messages, correlates the reply, enforces the timeout, and ignores duplicate or late replies.
+
+`Request` is point-to-point. On the server, pass exactly one valid player target. The request payload is one value; replies may return multiple values via `reply (true, ...)` or fail logically with `reply (false, reason, ...)`. `Timeout` in the options is the round-trip timeout (not the transport timeout). `OnComplete` is reserved internally, but `OnProgress` is allowed if the request upload is large.
+
+**Client asks the server**
 
 ```lua
-ChrononLabsStreamNet.Receive ("UploadAvatar", {
+ChrononLabsStreamNet.Request ("GetInventory", { IncludeEquipment = true }, {
+    Timeout = 10
+}, function (ok, responseOrReason)
+    if not ok then print ("Inventory request failed:", responseOrReason) return end
+    PrintTable (responseOrReason)
+end)
+```
+
+```lua
+ChrononLabsStreamNet.Respond ("GetInventory", {
     Direction = "client_to_server",
-    MaxBytes = 256 * 1024,
-    MaxInFlight = 1,
-    Cooldown = 5,
-    RequireReady = true,
-    RequireUsergroup = "admin",
-    MaxPerWindow = { Limit = 3, Window = 60 }
-}, function (ply, data)
-    print ("Avatar upload:", ply, #data)
+    Cooldown = 1,
+    MaxBytes = 4096
+}, function (ply, request, reply)
+    if not IsValid (ply) then return reply (false, "invalid player") end
+    if not CanOpenInventory (ply) then return reply (false, "not allowed") end
+
+    reply (true, {
+        Items = BuildInventory (ply),
+        Equipment = request.IncludeEquipment and BuildEquipment (ply) or nil
+    })
 end)
 ```
 
-All receive policy fields are optional.
-
-- `Direction` can be `any`, `client_to_server`, or `server_to_client`.
-- `MaxBytes` limits the original payload size before compression.
-- `MaxInFlight` limits active incoming transfers for that message per peer.
-- `Cooldown` limits how often that message can be accepted per peer.
-- `RequireReady` makes the server wait until the client has finished joining before accepting that message.
-- `RequireUsergroup` is enforced server-side for client-to-server messages. `admin` uses `Player:IsAdmin()`, `superadmin` uses `Player:IsSuperAdmin()`, and custom groups compare case-insensitively with `Player:GetUserGroup()`.
-- `MaxPerWindow` limits accepted transfer starts per peer and message over a sliding time window.
-
-## Sending tables
-
-### Server
+**Server asks one client**, same shape, but the target player comes first and the `Respond` callback has no `ply`:
 
 ```lua
-ChrononLabsStreamNet.Send ("PlayerData", ply, {
-    Name = "Player",
-    Level = 25,
-    Position = Vector (100, 200, 300),
-    Stats = {
-        Health = 100,
-        Armor = 50
-    }
-})
-```
-
-### Client
-
-```lua
-ChrononLabsStreamNet.Receive ("PlayerData", function (data)
-    PrintTable (data)
+ChrononLabsStreamNet.Request ("GetClientState", ply, { IncludeHud = true }, {
+    Timeout = 5
+}, function (ok, responseOrReason)
+    if not ok then print ("Client state request failed:", responseOrReason) return end
+    PrintTable (responseOrReason)
 end)
 ```
 
-## Broadcasting from the server
-
 ```lua
-ChrononLabsStreamNet.Broadcast ("GlobalAnnouncement", {
-    Title = "Server Update",
-    Message = "A new system has been loaded."
-})
-
-ChrononLabsStreamNet.BroadcastEx ("GlobalConfig", {
-    OnAllComplete = function (summary)
-        print ("Broadcast done:", summary.Completed, "failed:", summary.Failed)
-    end
-}, configTable)
-```
-
-## Sending raw binary data
-
-Raw mode is useful when you already have your own encoded format, compressed blob, generated file content, or binary payload.
-
-### Client
-
-```lua
-local data = string.rep ("A", 300000)
-
-ChrononLabsStreamNet.SendRaw ("UploadBlob", data, {
-    ChunkSize = 16384,
-    BytesPerSecond = 128 * 1024,
-    Window = 8,
-    OnComplete = function (ok, reason)
-        print ("Upload complete:", ok, reason)
-    end
-})
-```
-
-### Server
-
-```lua
-ChrononLabsStreamNet.Receive ("UploadBlob", function (ply, bytes)
-    print ("Received upload from", ply, "size:", #bytes)
+ChrononLabsStreamNet.Respond ("GetClientState", {
+    Direction = "server_to_client",
+    MaxBytes = 16 * 1024
+}, function (request, reply)
+    reply (true, BuildClientState (request))
 end)
 ```
 
-## Custom transfer options
+## Replicated values
+
+Server-owned values cached on every client. Useful for config, shop data, rules, HUD state, or large tables that late joiners must receive.
 
 ```lua
-ChrononLabsStreamNet.SendEx ("LargeInventorySync", ply, {
-    ChunkSize = 16384,
-    BytesPerSecond = 1 * 1024 * 1024,
-    BurstBytes = 512 * 1024,
-    Window = 24,
-    RetryInterval = 0.75,
-    Timeout = 20,
-    MaximumRetries = 16,
-    Compress = true,
-    Priority = "normal",
-    ProgressInterval = 0.25,
-    OnProgress = function (transfer)
-        print ("Transfer progress:", transfer.AckCount .. "/" .. transfer.TotalChunks)
-    end,
-    OnComplete = function (ok, reason, transfer)
-        print ("Transfer result:", ok, reason)
-    end
-}, inventoryData)
+-- Server
+ChrononLabsStreamNet.Replicate ("ServerConfig", configTable)
+ChrononLabsStreamNet.ClearReplicated ("ServerConfig")   -- or Replicate("ServerConfig", nil)
+
+-- Client
+ChrononLabsStreamNet.OnReplicated ("ServerConfig", function (value, name, cleared)
+    print ("Config changed:", name, cleared)
+end)
+
+local config = ChrononLabsStreamNet.GetReplicated ("ServerConfig", {})
 ```
 
-## Global configuration
+`OnReplicated` fires on initial delivery and on later updates. If a replication transfer ultimately fails, the client may stay stale until the server calls `Replicate` again.
 
-You can adjust global settings before heavy use:
+## Priority and pacing
+
+Priority decides which outgoing transfers get pumped first when a peer has multiple active sends. Use `high` for data the player is waiting on right now (menu state), `low` for work that can wait (debug dumps, cache).
 
 ```lua
-ChrononLabsStreamNet.SetConfig ("SpeedProfile", "fast")
-ChrononLabsStreamNet.SetConfig ("ChunkSize", 16384)
-ChrononLabsStreamNet.SetConfig ("BytesPerSecond", 1 * 1024 * 1024)
-ChrononLabsStreamNet.SetConfig ("BurstBytes", 512 * 1024)
-ChrononLabsStreamNet.SetConfig ("Window", 24)
-ChrononLabsStreamNet.SetConfig ("Timeout", 20)
-ChrononLabsStreamNet.SetConfig ("MaximumRetries", 16)
-ChrononLabsStreamNet.SetConfig ("MaximumIncomingBytesPerPeer", 32 * 1024 * 1024)
-ChrononLabsStreamNet.SetConfig ("PriorityAgingInterval", 2)
-ChrononLabsStreamNet.SetConfig ("RequestTimeout", 15)
-ChrononLabsStreamNet.SetConfig ("ResponseMaxBytes", nil)
+ChrononLabsStreamNet.SendEx ("MenuState", ply, { Priority = "high" }, state)
+ChrononLabsStreamNet.SendRaw ("DebugDump", ply, payload, { Priority = "low" })
 ```
 
-`SpeedProfile` is global and updates `BytesPerSecond`, `BurstBytes`, and `Window`. Built-in profiles are:
+Don't mark everything high. If everything is high priority, nothing is. `high` still works for large payloads, but it will delay other messages while it sends.
+
+`PriorityAgingInterval` (default `2`) controls how quickly waiting transfers earn a boost, so low-priority transfers don't sit forever behind higher-priority ones.
+
+Pacing is **per player** and set via `SpeedProfile` (or individual knobs). Built-in profiles:
 
 ```lua
-conservative = { BytesPerSecond = 96 * 1024, BurstBytes = 64 * 1024, Window = 6 }
-balanced     = { BytesPerSecond = 1 * 1024 * 1024, BurstBytes = 512 * 1024, Window = 24 }
-fast         = { BytesPerSecond = 2 * 1024 * 1024, BurstBytes = 512 * 1024, Window = 32 }
+conservative = { BytesPerSecond = 96 * 1024,       BurstBytes = 64 * 1024,       Window = 6 }
+balanced     = { BytesPerSecond = 1 * 1024 * 1024, BurstBytes = 512 * 1024,      Window = 24 }  -- default
+fast         = { BytesPerSecond = 2 * 1024 * 1024, BurstBytes = 512 * 1024,      Window = 32 }
 lightning    = { BytesPerSecond = 3 * 1024 * 1024, BurstBytes = 1 * 1024 * 1024, Window = 48 }
 ```
 
-`balanced` is the default. These pacing values are per player; set individual values after `SpeedProfile` if you want to override one knob.
+```lua
+ChrononLabsStreamNet.SetConfig ("SpeedProfile", "fast")
+ChrononLabsStreamNet.SetConfig ("Window", 24)   -- override one knob after the profile
+```
 
-In local testing with a 4 MiB unreliable transfer and 16 KiB chunks, these profiles measured roughly `0.5 MiB/s`, `1 MiB/s`, `2 MiB/s`, and `3 MiB/s` respectively. `lightning` is not recommended for heavily populated servers (`60+` players).
+In local testing (4 MiB unreliable transfer, 16 KiB chunks) these measured roughly `0.5`, `1`, `2`, and `3` MiB/s respectively. `lightning` is not recommended for heavily populated servers (60+ players).
+
+## Transfer control and progress
+
+Large outgoing transfers can be inspected or cancelled while running.
+
+```lua
+local id = ChrononLabsStreamNet.SendRaw ("LargeDownload", ply, data, {
+    ProgressInterval = 0.25,
+    OnProgress = function (transfer)
+        print ("Progress:", transfer.AckCount .. "/" .. transfer.TotalChunks)
+    end,
+    OnComplete = function (ok, reason, transfer)
+        print ("Finished:", ok, reason)
+    end
+})
+
+local transfer  = ChrononLabsStreamNet.GetTransfer (id, ply)   -- one transfer
+local transfers = ChrononLabsStreamNet.GetTransfers (ply)      -- all for that peer
+
+ChrononLabsStreamNet.Cancel (id, ply, "(MyAddon): Download cancelled by user.")
+local cancelled = ChrononLabsStreamNet.CancelAll (ply, "(MyAddon): All downloads cancelled.")
+```
+
+`CancelAll` returns the number of transfers it stopped. On the **client**, drop the player argument:
+
+```lua
+ChrononLabsStreamNet.Cancel (id, "(MyAddon): Upload cancelled by user.")
+ChrononLabsStreamNet.CancelAll ("(MyAddon): All uploads to the server cancelled.")
+```
+
+If a transfer could start, `SendRaw`/`SendEx` return a transfer id; a falsy return means it could not start.
 
 ## Stats
-
-The library includes a simple console command:
 
 ```txt
 chrononlabs_streamnet_stats
 ```
 
-You can also access stats manually:
-
 ```lua
-PrintTable (ChrononLabsStreamNet.GetStats ())
+PrintTable (ChrononLabsStreamNet.GetStats ())   -- great for live UI updates
+ChrononLabsStreamNet.ResetMetrics ()            -- zeroes lifetime counters, leaves active transfers alone
 ```
 
-Stats now include active outgoing transfers, unacknowledged chunks, remaining outgoing bytes, active incoming transfers, and lifetime metric snapshots. (Very useful for UI / live updates)
+Stats include active outgoing transfers, unacknowledged chunks, remaining outgoing bytes, active incoming transfers, and lifetime metric snapshots.
 
-```lua
-ChrononLabsStreamNet.ResetMetrics ()
-```
+## Configuration reference
 
-`ResetMetrics` zeros the lifetime counters without touching active transfers.
-
-## Transfer control
-
-Large outgoing transfers can be inspected or cancelled while they are still running;
-
-```lua
-local id = ChrononLabsStreamNet.SendRaw ("LargeDownload101", ply, data, {
-    OnProgress = function (transfer)
-        print ("Progress:", transfer.AckCount .. "/" .. transfer.TotalChunks)
-    end
-})
-
-local transfer = ChrononLabsStreamNet.GetTransfer (id, ply)
-local transfers = ChrononLabsStreamNet.GetTransfers (ply)
-
-ChrononLabsStreamNet.Cancel (id, ply, "(MyAddon): Download cancelled by user.")
-local cancelled = ChrononLabsStreamNet.CancelAll (ply, "(MyAddon): All downloads to this player cancelled.")
-```
-
-`CancelAll` cancels every active outgoing ChrononLabs-StreamNet transfer for that peer and returns the count.
-
-On the client, drop the player argument of course:
-
-```lua
-ChrononLabsStreamNet.Cancel (id, "(MyAddon): Upload cancelled by user.")
-local cancelled = ChrononLabsStreamNet.CancelAll ("(MyAddon): All uploads to the server cancelled.")
-```
-
-## Transfer priority
-
-Priority controls which outgoing transfers get pumped first when a peer has multiple active sends.
-
-```lua
-ChrononLabsStreamNet.SendEx ("MenuState", ply, {
-    Priority = "high"
-}, state)
-
-ChrononLabsStreamNet.SendRaw ("DebugDump", ply, payload, {
-    Priority = "low"
-})
-```
-
-Use priority when one transfer should move ahead of other queued sends for the same peer. `high` can be used for large payloads too, but it will get pumped before normal and low priority transfers, so it can delay other messages if the payload is huge. Use `low` for work that can wait.
-
-`PriorityAgingInterval` controls how quickly waiting transfers get another chance to send. With the default value of `2`, a transfer that has been waiting for a couple of seconds gets a small boost, so low priority transfers do not sit forever behind higher priority sends.
-
-## Example use cases
-
-ChrononLabs-StreamNet can be used for:
-
-- Addon configuration sync
-- Inventory systems
-- Character data
-- Duplication data
-- Build data
-- Save and load systems
-- Large anticheat reports
-- AI or machine learning telemetry
-- Custom file transfer
-- Admin tools
-- Complex UI state syncing
-- Server to client cache replication
-- Large generated datasets
-- Any system where normal net messages become too limited or messy
-
-## Best practices
-
-Do not trust client data just because the transport succeeded!!
-
-ChrononLabs-StreamNet improves delivery, pacing, recovery, and structure. It does not replace server-side validation, permission checks, sanity checks, or anticheat logic.
-
-For client to server messages, always validate that the player is allowed to send the data they are sending as well as the payload sent!
-
-## Notes
-
-ChrononLabs-StreamNet is meant to be a practical general-purpose networking layer.
-
-For tiny one-off messages, the default Garry's Mod `net` library is still fine. ChrononLabs-StreamNet becomes useful when you want cleaner structure, better reliability, larger transfers, recovery logic, or a unified API across your project.
-
-## License
-
-This project is licensed under the MIT License.
-
-You may use, modify, distribute, and include it in your own projects, including commercial addons, as long as the original copyright and license notice are preserved.
-
-If the file is renamed, merged, or implemented directly inside another addon, please keep clear credit to ChrononLabs-StreamNet / ChrononLabs in the source or documentation.
-
-
-
-# ChrononLabs-StreamNet Bonus examples (skip if you don't need, mostly for people that plans using it into big project / where fine-control is required)
-
-These are extra examples for ChrononLabs-StreamNet, they cover normal usage, large sanitized table streaming, raw transfers, completion callbacks, ACK/NACK behavior, retry settings, timeout settings, and the full options table.
-
-Important:
-ChrononLabs-StreamNet can serialize normal Lua values, tables, numbers, strings, booleans, vectors, angles, colors, and entities. (It cannot serialize functions!!)
-
-So if you want to send something like `hook.GetTable ()` or `concommand.GetTable ()`, you must sanitize it first, because those tables contain functions.
-
-## Example 1: Reliable settings sync with completion callback
-
-This example sends a normal structured table from the server to one client.
-
-The library handles chunking, compression, ACK/NACK, retry, timeout, and final delivery automatically.
-
-### Server
-
-```lua
--- util.AddNetworkString ("ForcePlayerSettingsSync") -- Not needed for ChrononLabs-StreamNet, just an example of what you no longer need! It is handled automatically
-
-hook.Add ("PlayerInitialSpawn", "ChrononLabsStreamNetExampleSettings", function (ply)
-    timer.Simple (3, function ()
-        if not IsValid (ply) then return end
-
-        local settings = {
-            Version = 1,
-            ServerName = GetHostName (),
-            Features = {
-                Inventory = true,
-                Anticheat = true,
-                BuildMode = false
-            },
-            Limits = {
-                MaxProps = 500,
-                MaxVehicles = 10,
-                MaxUploads = 3
-            }
-        }
-
-        ChrononLabsStreamNet.SendEx ("ExampleSettingsSync", ply, {
-            ChunkSize = 16384,
-            Compress = true,
-            CompressAt = 8192,
-            RetryInterval = 0.75,
-            Timeout = 20,
-            MaximumRetries = 16,
-            Window = 12,
-            ReliableData = false,
-
-            OnComplete = function (ok, reason, transfer)
-                print ("[SettingsSync] complete:", ok, reason)
-                print ("[SettingsSync] transfer id:", transfer.Id)
-                print ("[SettingsSync] chunks acked:", transfer.AckCount .. "/" .. transfer.TotalChunks)
-                print ("[SettingsSync] compressed:", transfer.Compressed)
-            end
-        }, settings)
-    end)
-end)
-```
-
-### Client
-
-```lua
-ChrononLabsStreamNet.Receive ("ExampleSettingsSync", function (settings)
-    print ("Received server settings")
-    PrintTable (settings)
-end)
-```
-
-### What this example covers
-
-- `SendEx`
-- Structured table sending
-- Compression
-- Automatic ACK tracking
-- Automatic retry if chunks are missing
-- Timeout failure if the transfer cannot complete
-- `OnComplete` callback after the receiver confirms completion
-
-
-## Example 2: Send large sanitized `concommand.GetTable ()` and `hook.GetTable ()`
-
-This example sends big Garry's Mod tables without crashing on function values.
-
-It converts unsupported values into safe strings before sending.
-
-This is useful for debug tools, admin tools, anticheat telemetry, addon inspection, or developer panels.
-
-### Shared sanitizer
-
-Put this somewhere shared, or above your example code.
-
-```lua
-local function ChrononLabsStreamNetSafeCopy (value, depth, seen)
-    depth = depth or 0
-    seen = seen or {}
-
-    local valueType = type (value)
-
-    if valueType == "nil" then return nil end
-    if valueType == "boolean" then return value end
-    if valueType == "number" then return value end
-    if valueType == "string" then return value end
-
-    if IsEntity and IsEntity (value) then
-        if IsValid (value) then
-            return tostring (value)
-        end
-
-        return "NULL Entity"
-    end
-
-    if isvector and isvector (value) then
-        return {
-            Type = "Vector",
-            X = value.x,
-            Y = value.y,
-            Z = value.z
-        }
-    end
-
-    if isangle and isangle (value) then
-        return {
-            Type = "Angle",
-            P = value.p,
-            Y = value.y,
-            R = value.r
-        }
-    end
-
-    if IsColor and IsColor (value) then
-        return {
-            Type = "Color",
-            R = value.r,
-            G = value.g,
-            B = value.b,
-            A = value.a
-        }
-    end
-
-    if valueType == "function" then
-        return "[function]"
-    end
-
-    if valueType == "userdata" then
-        return "[userdata] " .. tostring (value)
-    end
-
-    if valueType == "thread" then
-        return "[thread] " .. tostring (value)
-    end
-
-    if valueType ~= "table" then
-        return "[" .. valueType .. "] " .. tostring (value)
-    end
-
-    if depth >= 8 then
-        return "[max depth]"
-    end
-
-    if seen [value] then
-        return "[cycle]"
-    end
-
-    seen [value] = true
-
-    local output = {}
-    local count = 0
-    local maximumEntries = 2500
-
-    for key, pairValue in pairs (value) do
-        count = count + 1
-
-        if count > maximumEntries then
-            output ["__truncated"] = true
-            output ["__truncatedReason"] = "Maximum entries reached at this table level."
-            break
-        end
-
-        local safeKey = ChrononLabsStreamNetSafeCopy (key, depth + 1, seen)
-
-        if type (safeKey) ~= "string" and type (safeKey) ~= "number" then
-            safeKey = tostring (safeKey)
-        end
-
-        output [safeKey] = ChrononLabsStreamNetSafeCopy (pairValue, depth + 1, seen)
-    end
-
-    seen [value] = nil
-
-    return output
-end
-```
-
-### Client requests the dump
-
-```lua
-concommand.Add ("clsnet_request_debug_dump", function ()
-    ChrononLabsStreamNet.Send ("ExampleRequestDebugDump", {
-        IncludeConCommands = true,
-        IncludeHooks = true
-    })
-end)
-```
-
-### Server builds and sends the sanitized dump
-
-```lua
-ChrononLabsStreamNet.Receive ("ExampleRequestDebugDump", function (ply, request)
-    if not IsValid (ply) then return end
-
-    -- Always permission check real debug/admin features.
-    if not ply:IsAdmin () then return end
-
-    local dump = {
-        GeneratedAt = os.time (),
-        RequestedBy = ply:SteamID64 (),
-        ServerName = GetHostName (),
-        ConCommands = request.IncludeConCommands and ChrononLabsStreamNetSafeCopy (concommand.GetTable ()) or nil,
-        Hooks = request.IncludeHooks and ChrononLabsStreamNetSafeCopy (hook.GetTable ()) or nil
-    }
-
-    local json = util.TableToJSON (dump, false)
-
-    ChrononLabsStreamNet.SendRaw ("ExampleDebugDump", ply, json, {
-        ChunkSize = 16384,
-        Compress = true,
-        CompressAt = 512,
-        RetryInterval = 0.75,
-        Timeout = 30,
-        MaximumRetries = 20,
-        Window = 8,
-        ReliableData = false,
-
-        OnComplete = function (ok, reason, transfer)
-            print ("[DebugDump] sent:", ok, reason)
-            print ("[DebugDump] raw size:", transfer.RawSize)
-            print ("[DebugDump] packed size:", transfer.PackedSize)
-            print ("[DebugDump] chunks:", transfer.TotalChunks)
-            print ("[DebugDump] acked:", transfer.AckCount)
-            print ("[DebugDump] retransmits may have happened if chunk retries were needed")
-        end
-    })
-end)
-```
-
-### Client receives the raw JSON dump
-
-```lua
-ChrononLabsStreamNet.Receive ("ExampleDebugDump", function (json)
-    local dump = util.JSONToTable (json)
-
-    if not dump then
-        print ("Failed to decode debug dump")
-        return
-    end
-
-    print ("Received debug dump")
-    print ("Generated at:", dump.GeneratedAt)
-    print ("ConCommand entries:", dump.ConCommands and table.Count (dump.ConCommands) or 0)
-    print ("Hook entries:", dump.Hooks and table.Count (dump.Hooks) or 0)
-
-    -- PrintTable (dump) can be huge.
-    -- Use it only if you really want the full output.
-end)
-```
-
-### What this example covers
-
-- Sending very large data
-- Sanitizing unsupported values
-- Avoiding function serialization errors
-- Raw binary/string transfer with `SendRaw`
-- Compression
-- ACK/NACK recovery
-- Retry tracking through `OnComplete`
-- Admin permission check pattern
-
-
-## Bonus example: All options and useful transfer fields
-
-This example shows the full per-transfer options table and the useful fields available inside `OnComplete`.
-
-### Per-transfer options
-
-These can be passed to `SendEx` or `SendRaw`.
+### Per-transfer options (`SendEx` / `SendRaw`)
 
 ```lua
 local options = {
-    -- Maximum data bytes per chunk.
-    -- Keep this safely below the net message limit.
-    ChunkSize = 16384,
-
-    -- Enables or disables util.Compress for this transfer.
-    Compress = true,
-
-    -- Only compress when the original payload is at least this many bytes.
-    CompressAt = 8192,
-
-    -- How long to wait before retrying a chunk that was not acknowledged.
-    RetryInterval = 0.75,
-
-    -- How long the sender waits without progress before failing the transfer.
-    Timeout = 25,
-
-    -- Maximum retry count per chunk.
-    MaximumRetries = 20,
-
-    -- Maximum number of unacknowledged chunks in flight.
-    Window = 12,
-
-    -- false means data chunks are sent using unreliable mode and repaired by ACK/NACK.
-    -- true means data chunks are sent reliable, which is not recommended for very large transfers.
-    ReliableData = false,
-
-    -- high, normal, or low. Higher priority transfers are pumped first.
-    Priority = "normal",
-
-    -- How often progress callbacks can fire while acknowledged chunks change.
-    ProgressInterval = 0.25,
-
-    -- Called while outgoing chunks are acknowledged.
-    OnProgress = function (transfer)
-        print ("Progress:", transfer.AckCount .. "/" .. transfer.TotalChunks)
-    end,
-
-    -- Called when the receiver confirms completion, or when the transfer fails.
-    OnComplete = function (ok, reason, transfer)
-        print ("Transfer finished:", ok, reason)
-
-        -- Useful transfer fields:
-        print ("Id:", transfer.Id)
-        print ("Name:", transfer.Name)
-        print ("Mode:", transfer.Mode)
-        print ("RawSize:", transfer.RawSize)
-        print ("PackedSize:", transfer.PackedSize)
-        print ("Compressed:", transfer.Compressed)
-        print ("Checksum:", transfer.Checksum)
-        -- Checksum is a numeric CRC32 value.
-        print ("ChunkSize:", transfer.ChunkSize)
-        print ("TotalChunks:", transfer.TotalChunks)
-        print ("AckCount:", transfer.AckCount)
-        print ("InFlightCount:", transfer.InFlightCount)
-        print ("RetryInterval:", transfer.RetryInterval)
-        print ("Timeout:", transfer.Timeout)
-        print ("MaximumRetries:", transfer.MaximumRetries)
-        print ("Window:", transfer.Window)
-        print ("ReliableData:", transfer.ReliableData)
-        print ("CreatedAt:", transfer.CreatedAt)
-        print ("LastProgress:", transfer.LastProgress)
-        print ("ProgressInterval:", transfer.ProgressInterval)
-        print ("LastProgressCallback:", transfer.LastProgressCallback)
-        print ("LastProgressAckCount:", transfer.LastProgressAckCount)
-        print ("Done:", transfer.Done)
-
-        -- Detailed internal tables:
-        -- transfer.Sent
-        -- transfer.Retries
-        -- transfer.Acked
-        -- transfer.InFlight
-        -- transfer.NackQueue
-        -- transfer.NackSeen
-
-        -- Avoid printing transfer.Data for huge payloads.
-    end
+    ChunkSize        = 16384,   -- max data bytes per chunk; keep safely below the net message limit
+    Compress         = true,    -- enable util.Compress for this transfer
+    CompressAt       = 8192,    -- only compress when the original payload is at least this many bytes
+    BytesPerSecond   = 1 * 1024 * 1024,  -- per-transfer pacing override
+    BurstBytes       = 512 * 1024,       -- per-transfer burst override
+    Window           = 12,      -- max unacknowledged chunks in flight
+    RetryInterval    = 0.75,    -- wait before retrying an unacknowledged chunk
+    Timeout          = 25,      -- fail after this many seconds without progress
+    MaximumRetries   = 20,      -- max retries per chunk
+    ReliableData     = false,   -- false = unreliable + ACK/NACK repair (recommended for large data)
+                                -- true  = reliable chunks (can block other reliable messages on big transfers)
+    Priority         = "normal",-- "high", "normal", or "low"
+    ProgressInterval = 0.25,    -- min seconds between OnProgress calls
+    OnProgress       = function (transfer) end,            -- fires as acked chunks change
+    OnComplete       = function (ok, reason, transfer) end,-- fires on completion or failure
+    OnAllComplete    = function (summary) end              -- multi-target sends only
 }
 ```
 
-### Global configuration fields
+> Under load, large unreliable chunks can cause extra resends, lower `ChunkSize` first if drops are frequent. `ReliableData = true` can help small or latency-sensitive transfers, but large reliable transfers may block other reliable net messages. Treat it as a trade-off, not a default.
 
-These are global defaults. Set them once before heavy use.
+### Useful `transfer` fields (inside `OnComplete` / `OnProgress`)
+
+```lua
+transfer.Id, transfer.Name, transfer.Mode, transfer.Peer
+transfer.RawSize, transfer.PackedSize, transfer.Compressed
+transfer.Checksum            -- numeric CRC32
+transfer.ChunkSize, transfer.TotalChunks, transfer.AckCount, transfer.InFlightCount
+transfer.RetryInterval, transfer.Timeout, transfer.MaximumRetries, transfer.Window, transfer.ReliableData
+transfer.CreatedAt, transfer.LastProgress, transfer.ProgressInterval
+transfer.LastProgressCallback, transfer.LastProgressAckCount, transfer.Done
+
+-- Detailed internal tables (rarely needed): Sent, Retries, Acked, InFlight, NackQueue, NackSeen
+-- Avoid printing transfer.Data for huge payloads.
+```
+
+### Global defaults (`SetConfig`)
+
+Set these once before heavy use.
 
 ```lua
 ChrononLabsStreamNet.SetConfig ("MaximumNetMessageBytes", 60000)
 ChrononLabsStreamNet.SetConfig ("ChunkSize", 16384)
-ChrononLabsStreamNet.SetConfig ("SpeedProfile", "balanced")
+ChrononLabsStreamNet.SetConfig ("SpeedProfile", "balanced")   -- sets BytesPerSecond/BurstBytes/Window together
 ChrononLabsStreamNet.SetConfig ("BytesPerSecond", 1 * 1024 * 1024)
 ChrononLabsStreamNet.SetConfig ("BurstBytes", 512 * 1024)
 ChrononLabsStreamNet.SetConfig ("Window", 24)
@@ -1005,71 +487,9 @@ ChrononLabsStreamNet.SetConfig ("ResponseMaxBytes", nil)
 ChrononLabsStreamNet.SetConfig ("Debug", false)
 ```
 
-When the server is under load, sending large chunks over the default unreliable path can cause extra resends, if unreliable transfers keep dropping too often you should try lowering the chunk size first. Turning on reliable data can help for smaller transfers or ones that need low latency however keep in mind that big reliable transfers might block other reliable network messages. So use it as a trade‑off, not as the new default.
+## How delivery works (ACK / NACK / retry / timeout)
 
-### Server sends a large generated payload with every option
-
-```lua
-concommand.Add ("clsnet_bonus_send_big", function (ply)
-    if SERVER and IsValid (ply) then return end
-
-    for _, target in ipairs (player.GetAll ()) do
-        local payload = string.rep ("ChrononLabs-StreamNet bonus payload\n", 50000)
-
-        ChrononLabsStreamNet.SendRaw ("ExampleBonusBigPayload", target, payload, {
-            ChunkSize = 16384,
-            Compress = true,
-            CompressAt = 8192,
-            RetryInterval = 0.75,
-            Timeout = 25,
-            MaximumRetries = 20,
-            Window = 12,
-            ReliableData = false,
-
-            OnComplete = function (ok, reason, transfer)
-                print ("[Bonus] complete:", ok, reason)
-                print ("[Bonus] target:", IsValid (transfer.Peer) and transfer.Peer:Nick () or "invalid")
-                print ("[Bonus] transfer:", transfer.Id, transfer.Name)
-                print ("[Bonus] size:", transfer.RawSize, "packed:", transfer.PackedSize)
-                print ("[Bonus] chunks:", transfer.AckCount .. "/" .. transfer.TotalChunks)
-                print ("[Bonus] compressed:", transfer.Compressed)
-            end
-        })
-    end
-end)
-```
-
-### Client receives the large payload
-
-```lua
-ChrononLabsStreamNet.Receive ("ExampleBonusBigPayload", function (payload)
-    print ("Received bonus payload")
-    print ("Payload size:", #payload)
-    print ("First 128 bytes:")
-    print (string.sub (payload, 1, 128))
-end)
-```
-
-### What this bonus example covers
-
-- Every per-transfer option
-- Global configuration fields
-- Raw transfer
-- Large generated payload
-- Completion callback
-- ACK count
-- Total chunk count
-- Retry and timeout configuration
-- ReliableData choice
-- Compression choice
-- Transfer metadata inspection
-
-
-## Notes++ about ACK, NACK, retry, and timeout
-
-!You do not manually call ACK or NACK!
-
-The flow is automatic:
+You never call ACK or NACK manually. The flow is automatic:
 
 1. Sender splits the payload into chunks.
 2. Sender sends chunks according to pacing and window limits.
@@ -1082,11 +502,174 @@ The flow is automatic:
 9. Receiver sends final completion confirmation.
 10. Sender calls `OnComplete`.
 
-Finished incoming transfers are remembered for a short time. This lets the receiver ignore late duplicate chunks without calling your callback again, while still answering the sender with the right completion or cancel message.
+Finished incoming transfers are remembered for a short time (`FinishedIncomingTtl`), so the receiver can ignore late duplicate chunks without calling your callback again, while still answering the sender with the right completion/cancel message. If a transfer can't finish before its timeout or retry limit, it fails in a predictable, handleable way.
 
-If this cannot complete before the timeout or retry limit, the transfer fails properly in an 'expected way' that you can handle.
+## Security and best practices
+
+**Do not trust client data just because the transport succeeded.** ChrononLabs-StreamNet improves delivery, pacing, recovery, and structure. It does not replace server-side validation, permission checks, sanity checks, or anticheat logic.
+
+For client→server messages, always validate both that the player is allowed to send the data **and** the contents of the payload itself.
+
+For tiny one-off messages the default `net` library is still fine. Reach for ChrononLabs-StreamNet when you want cleaner structure, better reliability, larger transfers, recovery logic, or a unified API across your project.
+
+## Example use cases
+
+- Addon configuration sync
+- Inventory systems
+- Character data
+- Duplication and build data
+- Save and load systems
+- Large anticheat reports
+- AI or machine learning telemetry
+- Custom file transfer
+- Admin tools
+- Complex UI state syncing
+- Server to client cache replication
+- Large generated datasets
+- Any system where normal net messages become too limited or messy
+
+## Worked examples
+
+> Aimed at larger projects where fine control matters. The library can serialize normal Lua values, tables, numbers, strings, booleans, vectors, angles, colors, and entities, **but not functions**. Tables like `hook.GetTable ()` contain functions, so sanitize them first (Example 2).
+
+### Example 1: Settings sync with completion callback
+
+Sends a structured table from server to one client. Chunking, compression, ACK/NACK, retry, timeout, and final delivery are automatic.
+
+```lua
+-- Server
+hook.Add ("PlayerInitialSpawn", "ChrononLabsStreamNetExampleSettings", function (ply)
+    timer.Simple (3, function ()
+        if not IsValid (ply) then return end
+
+        local settings = {
+            Version = 1,
+            ServerName = GetHostName (),
+            Features = { Inventory = true, Anticheat = true, BuildMode = false },
+            Limits   = { MaxProps = 500, MaxVehicles = 10, MaxUploads = 3 }
+        }
+
+        ChrononLabsStreamNet.SendEx ("ExampleSettingsSync", ply, {
+            ChunkSize = 16384,
+            Compress = true,
+            CompressAt = 8192,
+            RetryInterval = 0.75,
+            Timeout = 20,
+            MaximumRetries = 16,
+            Window = 12,
+            ReliableData = false,
+            OnComplete = function (ok, reason, transfer)
+                print ("[SettingsSync] complete:", ok, reason)
+                print ("[SettingsSync] chunks acked:", transfer.AckCount .. "/" .. transfer.TotalChunks)
+                print ("[SettingsSync] compressed:", transfer.Compressed)
+            end
+        }, settings)
+    end)
+end)
+```
+
+```lua
+-- Client
+ChrononLabsStreamNet.Receive ("ExampleSettingsSync", function (settings)
+    print ("Received server settings")
+    PrintTable (settings)
+end)
+```
+
+### Example 2: Large sanitized debug dump
+
+Sends big Garry's Mod tables (`concommand.GetTable ()`, `hook.GetTable ()`) without crashing on function values, by converting unsupported values into safe strings first. Useful for debug/admin tools, anticheat telemetry, and developer panels.
+
+**Shared sanitizer** (put it somewhere shared):
+
+```lua
+local function ChrononLabsStreamNetSafeCopy (value, depth, seen)
+    depth = depth or 0
+    seen = seen or {}
+
+    local valueType = type (value)
+    if valueType == "nil" or valueType == "boolean" or valueType == "number" or valueType == "string" then
+        return value
+    end
+
+    if IsEntity and IsEntity (value) then return IsValid (value) and tostring (value) or "NULL Entity" end
+    if isvector and isvector (value) then return { Type = "Vector", X = value.x, Y = value.y, Z = value.z } end
+    if isangle  and isangle  (value) then return { Type = "Angle",  P = value.p, Y = value.y, R = value.r } end
+    if IsColor  and IsColor  (value) then return { Type = "Color",  R = value.r, G = value.g, B = value.b, A = value.a } end
+
+    if valueType == "function" then return "[function]" end
+    if valueType ~= "table"    then return "[" .. valueType .. "] " .. tostring (value) end
+
+    if depth >= 8        then return "[max depth]" end
+    if seen [value]      then return "[cycle]" end
+    seen [value] = true
+
+    local output, count, maximumEntries = {}, 0, 2500
+    for key, pairValue in pairs (value) do
+        count = count + 1
+        if count > maximumEntries then
+            output ["__truncated"] = true
+            break
+        end
+
+        local safeKey = ChrononLabsStreamNetSafeCopy (key, depth + 1, seen)
+        if type (safeKey) ~= "string" and type (safeKey) ~= "number" then safeKey = tostring (safeKey) end
+        output [safeKey] = ChrononLabsStreamNetSafeCopy (pairValue, depth + 1, seen)
+    end
+
+    seen [value] = nil
+    return output
+end
+```
+
+**Client requests, server builds and sends, client receives:**
+
+```lua
+-- Client
+concommand.Add ("clsnet_request_debug_dump", function ()
+    ChrononLabsStreamNet.Send ("ExampleRequestDebugDump", { IncludeConCommands = true, IncludeHooks = true })
+end)
+```
+
+```lua
+-- Server
+ChrononLabsStreamNet.Receive ("ExampleRequestDebugDump", function (ply, request)
+    if not IsValid (ply) or not ply:IsAdmin () then return end   -- always permission-check admin features
+
+    local dump = {
+        GeneratedAt = os.time (),
+        RequestedBy = ply:SteamID64 (),
+        ConCommands = request.IncludeConCommands and ChrononLabsStreamNetSafeCopy (concommand.GetTable ()) or nil,
+        Hooks       = request.IncludeHooks       and ChrononLabsStreamNetSafeCopy (hook.GetTable ())       or nil
+    }
+
+    ChrononLabsStreamNet.SendRaw ("ExampleDebugDump", ply, util.TableToJSON (dump, false), {
+        ChunkSize = 16384, Compress = true, CompressAt = 512,
+        RetryInterval = 0.75, Timeout = 30, MaximumRetries = 20, Window = 8, ReliableData = false,
+        OnComplete = function (ok, reason, transfer)
+            print ("[DebugDump] sent:", ok, reason, "raw:", transfer.RawSize, "packed:", transfer.PackedSize)
+        end
+    })
+end)
+```
+
+```lua
+-- Client
+ChrononLabsStreamNet.Receive ("ExampleDebugDump", function (json)
+    local dump = util.JSONToTable (json)
+    if not dump then print ("Failed to decode debug dump") return end
+
+    print ("ConCommand entries:", dump.ConCommands and table.Count (dump.ConCommands) or 0)
+    print ("Hook entries:",       dump.Hooks       and table.Count (dump.Hooks)       or 0)
+end)
+```
+
+## License
+
+MIT. You may use, modify, distribute, and include it in your own projects, including commercial addons, as long as the original copyright and license notice are preserved.
+
+If the file is renamed, merged, or implemented directly inside another addon, please keep clear credit to ChrononLabs-StreamNet / ChrononLabs in the source or documentation.
 
 ## Contributions
 
-Contributions are welcome of course. Bug reports, fixes, examples, docs improvements, and real world test cases are all useful;
-
+Contributions are welcome. Bug reports, fixes, examples, docs improvements, and real-world test cases are all useful.
