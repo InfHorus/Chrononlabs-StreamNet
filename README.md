@@ -14,7 +14,7 @@
 
 ---
 
-It makes networking cleaner, safer, and more reliable across all kinds of projects. Use it for simple addon messages, structured data sync, raw binary transfers, or very large payloads that would normally be painful with the default `net` library. It works just as well as a better-organized, more optimized layer for everyday project communication.
+ChrononLabs-StreamNet makes networking cleaner, safer, and more reliable across all kinds of projects. Use it for simple addon messages, structured data sync, raw binary transfers, or very large payloads that would normally be painful with the default `net` library. It also works as a better-organized, more optimized layer for everyday communication.
 
 ## Benchmark
 
@@ -28,7 +28,19 @@ Garry's Mod `net` is fine for small one-off messages, but it gets painful when a
 
 ChrononLabs-StreamNet streams data in chunks (default payload limit 8 MB, raisable for trusted use cases), paces the transfer, validates the data, retries missing chunks, and rebuilds the full payload before your callback runs. On top of that you get receive policies, priority, compression, progress callbacks, cancellation, timeout handling, stats, and one API for both client→server and server→client messages.
 
-Those same features help keep your server networking under control. Direction policies, `MaxBytes`, `MaxInFlight`, cooldowns, ready checks, checksums, retries, timeouts, and duplicate protection all reduce common mistakes and abuse cases like spam, oversized payloads, corrupted chunks, repeated sends, and wrong-way messages.
+Those same features also make your server much harder to abuse. Because every incoming message is gated by a receive policy you control, spammers, exploiters, and oversized or wrong-way payloads get rejected before your handler ever runs. Each policy closes off a common attack or mistake:
+
+- **`Direction`** (`any`, `client_to_server`, `server_to_client`): reject messages coming from the wrong side, so clients can't trigger server-only handlers.
+- **`MaxBytes`**: cap the original payload size (before compression) to stop oversized and memory-bombing transfers.
+- **`MaxInFlight`**: limit how many active incoming transfers a single peer can have per message, stopping parallel flooding.
+- **`Cooldown`**: enforce a minimum delay between starts of the same message from one peer, throttling rapid spam.
+- **`MaxPerWindow`**: limit accepted transfer starts per peer over a sliding time window, catching slower sustained spam that slips past a cooldown.
+- **`RequireReady`**: ignore messages until a joining client has sent the internal ready signal, blocking early/forged sends during load.
+- **`RequireUsergroup`**: require `admin`, `superadmin`, or a custom usergroup before a server handler runs, so privileged messages can't be faked by normal players.
+
+On top of policies, checksums reject corrupted chunks, duplicate protection ignores replayed retry packets, and timeouts clean up stalled transfers. Together these turn the transport into a strong first line of defense against spam, oversized payloads, corrupted data, repeated sends, and exploiters flooding or attacking your receivers.
+
+The policies above are only the security layer. For the full list of everything the library does, see [Main advantages](#main-advantages).
 
 This does **not** replace an anticheat, permission checks, or server-side validation. You still need to check what a client is allowed to do. It just gives you a safer transport to build on, so your addon code can focus on the data instead of re-implementing chunking and retries in every project.
 
@@ -45,7 +57,7 @@ Useful for inventory data, save data, debug dumps, admin tools, UI state, genera
 - Per-peer pacing with `BytesPerSecond`, `BurstBytes`, `Window`, and `MaximumPacketsPerThink`.
 - Deferred completion handling with `MaximumCompletionsPerThink`, so many finished transfers do not all decode and call handlers in the same net receive frame.
 - Congestion control for unreliable transfers, so aggressive sends can back off instead of flooding weak links.
-- Up to around 3x faster than other large-payload networking libraries such as NetStream and VNet in local tests.
+- Up to around 3x faster than other large-payload networking libraries such as NetStream and vNet in local tests.
 - Transfer priority with `Priority = "high"`, `Priority = "normal"`, and `Priority = "low"`.
 - Priority aging with `PriorityAgingInterval` so lower priority transfers still get chances to send.
 - Optional compression with `util.Compress` and `CompressAt`.
