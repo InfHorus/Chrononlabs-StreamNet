@@ -1,6 +1,18 @@
-# ChrononLabs-StreamNet: Fast and Reliable Garry's Mod Networking
+<div align="center">
 
-ChrononLabs-StreamNet is a lightweight, optimized, single-file streaming networking library for Garry's Mod.
+<h1>⚡ ChrononLabs-StreamNet</h1>
+<h3>Fast, Reliable & Secure Garry's Mod Networking</h3>
+
+<p><em>A lightweight, optimized, single-file streaming networking library for Garry's Mod.</em></p>
+
+<img alt="Garry's Mod" src="https://img.shields.io/badge/Garry's%20Mod-Lua-blue">
+<img alt="Single File" src="https://img.shields.io/badge/single--file-%E2%9C%93-success">
+<img alt="Up to 3x Faster" src="https://img.shields.io/badge/up%20to-3x%20faster-orange">
+<img alt="Secure by Policy" src="https://img.shields.io/badge/secure-by%20policy-blueviolet">
+
+</div>
+
+---
 
 It makes networking cleaner, safer, and more reliable across all kinds of projects. Use it for simple addon messages, structured data sync, raw binary transfers, or very large payloads that would normally be painful with the default `net` library. It works just as well as a better-organized, more optimized layer for everyday project communication.
 
