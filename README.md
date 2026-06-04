@@ -16,6 +16,34 @@
 
 ChrononLabs-StreamNet makes networking cleaner, safer, and more reliable across all kinds of projects. Use it for simple addon messages, structured data sync, raw binary transfers, or very large payloads that would normally be painful with the default `net` library. It also works as a better-organized, more optimized layer for everyday communication.
 
+<details>
+<summary><strong>Table of contents</strong></summary>
+
+- [Benchmark](#benchmark)
+- [Why it exists](#why-it-exists)
+- [Main advantages](#main-advantages)
+- [Installation](#installation)
+- [Delivery model](#delivery-model)
+- [Quick start](#quick-start)
+- [The API at a glance](#the-api-at-a-glance)
+- [Sending data](#sending-data)
+- [Receiving safely (receive policies)](#receiving-safely-receive-policies)
+- [Profiles](#profiles)
+- [Request / Response](#request--response)
+- [Replicated values](#replicated-values)
+- [Priority and pacing](#priority-and-pacing)
+- [Transfer control and progress](#transfer-control-and-progress)
+- [Stats](#stats)
+- [Configuration reference](#configuration-reference)
+- [How delivery works (ACK / NACK / retry / timeout)](#how-delivery-works-ack--nack--retry--timeout)
+- [Security and best practices](#security-and-best-practices)
+- [Example use cases](#example-use-cases)
+- [Worked examples](#worked-examples)
+- [License](#license)
+- [Contributions](#contributions)
+
+</details>
+
 ## Benchmark
 
 vNet vs NetStream vs ChrononLabs-StreamNet, client to server upload, all libraries at stock defaults.
@@ -107,7 +135,8 @@ The file handles client distribution automatically when loaded server-side. No `
 
 ChrononLabs-StreamNet provides **guaranteed complete delivery**: a message reaches your callback only after the full payload has been received, validated, assembled, and decompressed if needed. Missing chunks are requested again; if a transfer cannot recover, it **fails** instead of silently delivering incomplete or corrupted data. This makes it suitable for systems where partial delivery is not acceptable.
 
-> **CRC note:** checksums catch accidental corruption / payload mismatch, not malicious tampering. Always keep validating client data server-side.
+> [!NOTE]
+> CRC checks aren't bulletproof, they catch accidental corruption and payload mismatches well, but a determined user could craft data that still matches, therefore you should keep validating client data server-side.
 
 ## Quick start
 
@@ -177,8 +206,6 @@ ChrononLabsStreamNet.SendEx ("MenuState", ply, {
     Compress = true
 }, menuState)
 ```
-
-> Functions cannot be serialized. To send tables that may contain functions (e.g. `hook.GetTable ()`), sanitize them first, see [the worked example](#example-2-large-sanitized-debug-dump).
 
 ### Raw bytes: `SendRaw`
 
@@ -457,6 +484,7 @@ local options = {
 }
 ```
 
+> [!TIP]
 > Under load, large unreliable chunks can cause extra resends, lower `ChunkSize` first if drops are frequent. `ReliableData = true` can help small or latency-sensitive transfers, but large reliable transfers may block other reliable net messages. Treat it as a trade-off, not a default.
 
 ### Useful `transfer` fields (inside `OnComplete` / `OnProgress`)
@@ -554,6 +582,7 @@ For tiny one-off messages the default `net` library is still fine. Reach for Chr
 
 ## Worked examples
 
+> [!NOTE]
 > Aimed at larger projects where fine control matters. The library can serialize normal Lua values, tables, numbers, strings, booleans, vectors, angles, colors, and entities, **but not functions**. Tables like `hook.GetTable ()` contain functions, so sanitize them first (Example 2).
 
 ### Example 1: Settings sync with completion callback
