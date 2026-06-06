@@ -194,6 +194,7 @@ library.ReadyPlayers        = library.ReadyPlayers or {}
 library.PlayersByUserId     = library.PlayersByUserId or {}
 library.Profiles            = library.Profiles or {}
 library.ReplicatedValues    = library.ReplicatedValues or {}
+library.ReplicatedRevisions = library.ReplicatedRevisions or {}
 library.ReplicatedCallbacks = library.ReplicatedCallbacks or {}
 library.NextTransferId     	= library.NextTransferId or math.random (1, 2147483000)
 library.NextRequestId      	= library.NextRequestId or math.random (1, 2147483000)
@@ -1235,6 +1236,12 @@ local function normalizeReceivePolicy (policy)
 		}
 	end
 
+	local onHeader = policy.OnHeader or policy.onHeader
+
+	if onHeader ~= nil then
+		assert (type (onHeader) == "function", "(ChrononLabs-StreamNet): Receive policy OnHeader is invalid. Use a function.")
+	end
+
 	return {
 		Direction        = direction,
 		MaxBytes         = maxBytes,
@@ -1242,7 +1249,8 @@ local function normalizeReceivePolicy (policy)
 		Cooldown         = cooldown,
 		RequireReady     = policy.RequireReady == true or policy.requireReady == true,
 		RequireUsergroup = requireUsergroup,
-		MaxPerWindow     = maxPerWindow
+		MaxPerWindow     = maxPerWindow,
+		OnHeader         = onHeader
 	}
 end
 
@@ -1594,11 +1602,32 @@ local function registerInternalReceive (name, policy, callback)
 	library.ReceivePolicies [messageLowerName] = normalizeReceivePolicy (policy)
 end
 
-registerInternalReceive ((internalNamePrefix .. "replicate"), { Direction = "server_to_client" }, function (action, name, value)
+registerInternalReceive ((internalNamePrefix .. "replicate"), { Direction = "server_to_client" }, function (action, name, value, revision)
 	if SERVER then return end
 	if type (name) ~= "string" or name == "" then return end
 
 	local key = lowerName (name)
+
+	if action == "clear" and revision == nil then
+		-- Clear appends revision in the value slot for old-client compatibility.
+		revision = value
+		value    = nil
+	end
+
+	if revision ~= nil then
+		revision = tonumber (revision)
+
+		if not revision or revision ~= revision or revision <= 0 then return end
+
+		revision = mathFloor (revision)
+
+		local lastRevision = library.ReplicatedRevisions [key]
+
+		if lastRevision ~= nil and revision <= lastRevision then
+			return
+		end
+	end
+
 	local cleared = action == "clear"
 
 	if action == "set" then
@@ -1607,6 +1636,10 @@ registerInternalReceive ((internalNamePrefix .. "replicate"), { Direction = "ser
 		library.ReplicatedValues [key] = nil
 	else
 		return
+	end
+
+	if revision ~= nil then
+		library.ReplicatedRevisions [key] = revision
 	end
 
 	local callbacks = library.ReplicatedCallbacks [key]
@@ -2561,6 +2594,39 @@ local function onHeaderPacket (peer)
 			sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): Receive policy window limit active. Wait before sending this message again.", currentTime)
 			return
 		end
+
+		if policy.OnHeader then
+			local headerInfo = {
+				Id          = transferId,
+				Name        = name,
+				Mode        = payloadMode,
+				Raw         = payloadMode == modeRaw,
+				Compressed  = compressed,
+				RawSize     = rawSize,
+				PackedSize  = packedSize,
+				TotalChunks = totalChunks,
+				Checksum    = fullChecksum
+			}
+
+			local callbackOk, accepted, rejectReason
+
+			if SERVER then
+				callbackOk, accepted, rejectReason = pcall (policy.OnHeader, peer, headerInfo)
+			else
+				callbackOk, accepted, rejectReason = pcall (policy.OnHeader, headerInfo)
+			end
+
+			if not callbackOk then
+				ErrorNoHalt ("(ChrononLabs-StreamNet): OnHeader error for " .. name .. ": " .. tostring (accepted) .. ". Fix the receive policy for this message.\n")
+				sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): Receive policy OnHeader errored. Fix the receiver before retrying.", currentTime)
+				return
+			end
+
+			if accepted == false then
+				sendHeaderRejectCancel (peer, key, transferId, tostring (rejectReason or "(ChrononLabs-StreamNet): Receive policy OnHeader rejected this transfer."), currentTime)
+				return
+			end
+		end
 	end
 
 	if not bucket then
@@ -2797,7 +2863,19 @@ local function onReadyPacket (peer)
 		library.ReadyPlayers [userId] = true
 
 		for key, replicated in pairs (library.ReplicatedValues) do
-			local encodeOk, payload = pcall (encodeArguments, 1, "set", replicated.Name, replicated.Value)
+			local revision = replicated.Revision or library.ReplicatedRevisions [key]
+			revision = tonumber (revision)
+
+			if not revision or revision ~= revision or revision <= 0 then
+				revision = 1
+			end
+
+			revision = mathFloor (revision)
+
+			replicated.Revision              = revision
+			library.ReplicatedRevisions [key] = revision
+
+			local encodeOk, payload = pcall (encodeArguments, 1, "set", replicated.Name, replicated.Value, revision)
 
 			if encodeOk then
 				sendToTargets ((internalNamePrefix .. "replicate"), peer, modeArguments, payload, nil)
@@ -3242,15 +3320,26 @@ function library.Replicate (name, value)
 		return library.ClearReplicated (name)
 	end
 
-	local encodeOk, payload = pcall (encodeArguments, 1, "set", name, value)
+	local key      = lowerName (name)
+	local previous = library.ReplicatedValues [key]
+	local previousRevision = tonumber (library.ReplicatedRevisions [key] or (previous and previous.Revision)) or 0
+
+	if previousRevision ~= previousRevision or previousRevision < 0 then
+		previousRevision = 0
+	end
+
+	local revision = mathFloor (previousRevision) + 1
+	local encodeOk, payload = pcall (encodeArguments, 1, "set", name, value, revision)
 
 	if not encodeOk then
 		return false, "(ChrononLabs-StreamNet): Replicated value could not be encoded: " .. tostring (payload)
 	end
 
-	library.ReplicatedValues [lowerName (name)] = {
-		Name  = name,
-		Value = value
+	library.ReplicatedRevisions [key] = revision
+	library.ReplicatedValues [key] = {
+		Name     = name,
+		Value    = value,
+		Revision = revision
 	}
 
 	local targets = {}
@@ -3287,17 +3376,26 @@ function library.ClearReplicated (name)
 	local key = lowerName (name)
 	local existed = library.ReplicatedValues [key] ~= nil
 
-	library.ReplicatedValues [key] = nil
-
 	if not existed then
 		return true
 	end
 
-	local encodeOk, payload = pcall (encodeArguments, 1, "clear", name)
+	local previous = library.ReplicatedValues [key]
+	local previousRevision = tonumber (library.ReplicatedRevisions [key] or (previous and previous.Revision)) or 0
+
+	if previousRevision ~= previousRevision or previousRevision < 0 then
+		previousRevision = 0
+	end
+
+	local revision = mathFloor (previousRevision) + 1
+	local encodeOk, payload = pcall (encodeArguments, 1, "clear", name, revision)
 
 	if not encodeOk then
 		return false, "(ChrononLabs-StreamNet): Replicated clear could not be encoded: " .. tostring (payload)
 	end
+
+	library.ReplicatedValues [key]    = nil
+	library.ReplicatedRevisions [key] = revision
 
 	local targets = {}
 

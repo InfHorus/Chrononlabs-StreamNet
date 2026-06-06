@@ -65,6 +65,7 @@ Those same features also make your server much harder to abuse. Because every in
 - **`MaxPerWindow`**: limit accepted transfer starts per peer over a sliding time window, catching slower sustained spam that slips past a cooldown.
 - **`RequireReady`**: ignore messages until a joining client has sent the internal ready signal, blocking early/forged sends during load.
 - **`RequireUsergroup`**: require `admin`, `superadmin`, or a custom usergroup before a server handler runs, so privileged messages can't be faked by normal players.
+- **`OnHeader`**: inspect accepted transfer metadata and reject before chunk storage is allocated.
 
 On top of policies, checksums reject corrupted chunks, duplicate protection ignores replayed retry packets, and timeouts clean up stalled transfers. Together these turn the transport into a strong first line of defense against spam, oversized payloads, corrupted data, repeated sends, and exploiters flooding or attacking your receivers.
 
@@ -104,7 +105,7 @@ Useful for inventory data, save data, debug dumps, admin tools, UI state, genera
 - Completion callbacks with `OnComplete`.
 - Progress callbacks for outgoing transfers with `OnProgress` and `ProgressInterval`.
 - Request/response helpers with correlation, timeout, duplicate-reply protection, and fast failure.
-- Replicated values with `Replicate`, `OnReplicated`, `GetReplicated`, and late-join sync for large config/state tables.
+- Replicated values with `Replicate`, `OnReplicated`, `GetReplicated`, revisioned update ordering, and late-join sync for large config/state tables.
 - Outgoing transfer lookup with `GetTransfer` and `GetTransfers`.
 - Outgoing transfer cancellation with `Cancel` and `CancelAll`.
 - Runtime stats with `GetStats`, `ResetMetrics`, and `chrononlabs_streamnet_stats`.
@@ -119,6 +120,7 @@ Useful for inventory data, save data, debug dumps, admin tools, UI state, genera
 - Receive `RequireReady` policies to wait until a joining client has sent the internal ready signal.
 - Receive `RequireUsergroup` policies to require admin, superadmin, or a custom usergroup before server handlers run.
 - Receive `MaxPerWindow` policies to limit accepted transfer starts per peer and message over a sliding time window.
+- Receive `OnHeader` policies to inspect metadata and reject before chunk storage is allocated.
 - Useful for basic addons, advanced systems, admin tools, anticheat systems, AI telemetry, save systems, and file-like transfers.
 
 ## Installation
@@ -272,7 +274,10 @@ ChrononLabsStreamNet.Receive ("AvatarUpload", {
     Cooldown = 5,
     RequireReady = true,
     RequireUsergroup = "admin",
-    MaxPerWindow = { Limit = 3, Window = 60 }
+    MaxPerWindow = { Limit = 3, Window = 60 },
+    OnHeader = function (ply, info)
+        return info.RawSize <= 256 * 1024
+    end
 }, function (ply, bytes)
     print ("Avatar upload from", ply, "bytes:", #bytes)
 end)
@@ -287,6 +292,7 @@ end)
 | `RequireReady` | Server waits until the joining client has sent the internal ready signal. |
 | `RequireUsergroup` | Server-side gate for client→server messages. `admin` uses `IsAdmin()`, `superadmin` uses `IsSuperAdmin()`, custom groups compare case-insensitively against `GetUserGroup()`. |
 | `MaxPerWindow` | `{ Limit, Window }`, caps accepted starts per peer/message over a sliding time window. |
+| `OnHeader` | Optional early callback. Return `false, reason` to reject after metadata is validated but before chunk storage is allocated. |
 
 The transport can prove a payload arrived intact; it cannot decide whether the player was allowed to send it. Always keep your own permission and sanity checks.
 
@@ -384,7 +390,7 @@ end)
 local config = ChrononLabsStreamNet.GetReplicated ("ServerConfig", {})
 ```
 
-`OnReplicated` fires on initial delivery and on later updates. If a replication transfer ultimately fails, the client may stay stale until the server calls `Replicate` again.
+`OnReplicated` fires on initial delivery and on later updates. Updates are revisioned internally, so late delivery from an older replication transfer cannot overwrite a newer value. If a replication transfer ultimately fails, the client may stay stale until the server calls `Replicate` again.
 
 ## Priority and pacing
 
