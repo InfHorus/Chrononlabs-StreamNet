@@ -107,6 +107,7 @@ Useful for inventory data, save data, debug dumps, admin tools, UI state, genera
 - Progress callbacks for outgoing transfers with `OnProgress` and `ProgressInterval`.
 - Request/response helpers with correlation, timeout, duplicate-reply protection, and fast failure.
 - Replicated values with `Replicate`, `OnReplicated`, `GetReplicated`, revisioned update ordering, and late-join sync for large config/state tables.
+- Ready lifecycle helpers with `IsReady`, `OnReady`, and `SendWhenReady` for safe server-to-client sends during player join.
 - Outgoing transfer lookup with `GetTransfer` and `GetTransfers`.
 - Outgoing transfer cancellation with `Cancel` and `CancelAll`.
 - Runtime stats with `GetStats`, `ResetMetrics`, and `chrononlabs_streamnet_stats`.
