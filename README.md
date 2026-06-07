@@ -314,7 +314,7 @@ end)
 
 On the server, `ply` is the player who sent the rejected transfer. On the client, `ply` is `nil` because the inbound transfer came from the server. Treat `info` as read-only; the same table is passed to every registered `OnRejected` callback for that event.
 
-Common `info` fields:
+The `info` table contains:
 
 | Field | Meaning |
 | --- | --- |
