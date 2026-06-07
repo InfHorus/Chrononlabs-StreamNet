@@ -31,6 +31,7 @@ ChrononLabs-StreamNet makes networking cleaner, safer, and more reliable across 
 - [Profiles](#profiles)
 - [Request / Response](#request--response)
 - [Replicated values](#replicated-values)
+- [Ready lifecycle](#ready-lifecycle)
 - [Priority and pacing](#priority-and-pacing)
 - [Transfer control and progress](#transfer-control-and-progress)
 - [Stats](#stats)
@@ -175,6 +176,7 @@ Receive callbacks get `(ply, ...)` on the server and `(...)` on the client. `Sen
 | `Request (name, [target], data, options, cb)` | One side asks one peer for data and expects exactly one answer. |
 | `Respond (name, policy, cb)` | The other end of a `Request`. |
 | `Replicate / OnReplicated / GetReplicated` | Server owns a value current and future clients should cache. |
+| `IsReady / OnReady / SendWhenReady` | Server-side helpers for join-time sends that must wait until the client is actually ready. |
 | `Receive (name, [policy], cb)` | Register a handler, optionally with safety limits. |
 | `GetTransfer / GetTransfers` | Inspect running outgoing transfers (for UI/debug). |
 | `Cancel / CancelAll` | Stop running outgoing transfers. |
@@ -391,6 +393,29 @@ local config = ChrononLabsStreamNet.GetReplicated ("ServerConfig", {})
 ```
 
 `OnReplicated` fires on initial delivery and on later updates. Updates are revisioned internally, so late delivery from an older replication transfer cannot overwrite a newer value. If a replication transfer ultimately fails, the client may stay stale until the server calls `Replicate` again.
+
+## Ready lifecycle
+
+Server-side sends made too early during join can arrive before the client is actually ready to process them. StreamNet tracks an internal ready signal from the client and exposes small helpers for that join-time path.
+
+```lua
+-- Server
+ChrononLabsStreamNet.OnReady (function (ply)
+    ChrononLabsStreamNet.Send ("PlayerGreeting", ply, "Welcome back", ply:Nick ())
+end)
+
+if ChrononLabsStreamNet.IsReady (ply) then
+    ChrononLabsStreamNet.Send ("OpenMenu", ply, "spawn_menu", true)
+end
+
+ChrononLabsStreamNet.SendWhenReady ("InitialStats", ply, {
+    Level = 12,
+    Money = 4500,
+    Team = "Builders"
+})
+```
+
+`OnReady` fires once per player after the client sends its ready signal. Register it during load; it does not retroactively fire for players who were already ready before registration. `SendWhenReady` is server-only and targets one valid player; it holds that transfer until the target is ready without changing the global `QueueUntilClientReady` setting.
 
 ## Priority and pacing
 

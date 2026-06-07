@@ -191,6 +191,7 @@ library.HeaderRejectBuckets = library.HeaderRejectBuckets or {}
 library.AckPending          = library.AckPending or {}
 library.NackPending         = library.NackPending or {}
 library.ReadyPlayers        = library.ReadyPlayers or {}
+library.ReadyCallbacks      = library.ReadyCallbacks or {}
 library.PlayersByUserId     = library.PlayersByUserId or {}
 library.Profiles            = library.Profiles or {}
 library.ReplicatedValues    = library.ReplicatedValues or {}
@@ -840,10 +841,10 @@ local function readOutgoingState (peer)
 	return library.OutgoingStates [key], key
 end
 
-local function canSendToPeer (peer)
+local function canSendToPeer (peer, transfer)
 	if CLIENT then return true end
 	if not isPlayerValue (peer) then return false end
-	if not config.QueueUntilClientReady then return true end
+	if not (config.QueueUntilClientReady or (transfer and transfer.WaitForReady)) then return true end
 
 	return library.ReadyPlayers [peer:UserID ()] == true
 end
@@ -1309,6 +1310,7 @@ local function prepareTransferPayload (name, payloadMode, payload, options)
 		MaximumRetries        = tonumber (options.MaximumRetries) or config.MaximumRetries,
 		Window                = tonumber (options.Window) or config.Window,
 		ReliableData          = options.ReliableData == true,
+		WaitForReady          = options.WaitForReady == true,
 		Priority              = priority,
 		PriorityName          = priorityName,
 		Callback              = options.OnComplete or options.onComplete,
@@ -1355,6 +1357,7 @@ local function buildTransferFromPrepared (prepared, peer)
 		SlowStartThreshold    = prepared.Window,
 		CongestionRecoveryMarker = 0,
 		ReliableData          = prepared.ReliableData,
+		WaitForReady          = prepared.WaitForReady,
 		Priority              = prepared.Priority,
 		PriorityName          = prepared.PriorityName,
 		LastScheduledAt       = currentTime,
@@ -2184,7 +2187,11 @@ local function sendChunk (state, transfer, sequence, retry)
 end
 
 local function pumpTransfer (state, transfer, currentTime)
-	if not canSendToPeer (transfer.Peer) then
+	if not canSendToPeer (transfer.Peer, transfer) then
+		if SERVER and isPlayerValue (transfer.Peer) and (config.QueueUntilClientReady or transfer.WaitForReady) and library.ReadyPlayers [transfer.Peer:UserID ()] ~= true then
+			transfer.LastProgress = currentTime
+		end
+
 		return false
 	end
 
@@ -2862,6 +2869,14 @@ local function onReadyPacket (peer)
 
 		library.ReadyPlayers [userId] = true
 
+		for callbackIndex, callback in ipairs (library.ReadyCallbacks) do
+			local callbackOk, callbackError = pcall (callback, peer)
+
+			if not callbackOk then
+				ErrorNoHalt ("(ChrononLabs-StreamNet): OnReady error: " .. tostring (callbackError) .. ". Fix the OnReady callback.\n")
+			end
+		end
+
 		for key, replicated in pairs (library.ReplicatedValues) do
 			local revision = replicated.Revision or library.ReplicatedRevisions [key]
 			revision = tonumber (revision)
@@ -3432,6 +3447,41 @@ function library.GetReplicated (name, defaultValue)
 	end
 
 	return value
+end
+
+function library.IsReady (ply)
+	if not SERVER then return false end
+	if not isPlayerValue (ply) then return false end
+
+	return library.ReadyPlayers [ply:UserID ()] == true
+end
+
+function library.OnReady (callback)
+	if not SERVER then return library end
+
+	assert (type (callback) == "function", "(ChrononLabs-StreamNet): OnReady callback must be a function.")
+
+	for callbackIndex, existingCallback in ipairs (library.ReadyCallbacks) do
+		if existingCallback == callback then
+			return library
+		end
+	end
+
+	library.ReadyCallbacks [#library.ReadyCallbacks + 1] = callback
+
+	return library
+end
+
+function library.SendWhenReady (name, ply, ...)
+	if not SERVER then
+		return false, "(ChrononLabs-StreamNet): SendWhenReady is server only. Use Send from the client or call SendWhenReady on the server."
+	end
+
+	if not isPlayerValue (ply) then
+		return false, "(ChrononLabs-StreamNet): SendWhenReady target must be a valid player."
+	end
+
+	return library.SendEx (name, ply, { WaitForReady = true }, ...)
 end
 
 function library.OnReplicated (name, callback)
