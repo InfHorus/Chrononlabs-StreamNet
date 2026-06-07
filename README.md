@@ -28,6 +28,7 @@ ChrononLabs-StreamNet makes networking cleaner, safer, and more reliable across 
 - [The API at a glance](#the-api-at-a-glance)
 - [Sending data](#sending-data)
 - [Receiving safely (receive policies)](#receiving-safely-receive-policies)
+- [Rejected transfers](#rejected-transfers)
 - [Profiles](#profiles)
 - [Request / Response](#request--response)
 - [Replicated values](#replicated-values)
@@ -123,6 +124,7 @@ Useful for inventory data, save data, debug dumps, admin tools, UI state, genera
 - Receive `RequireUsergroup` policies to require admin, superadmin, or a custom usergroup before server handlers run.
 - Receive `MaxPerWindow` policies to limit accepted transfer starts per peer and message over a sliding time window.
 - Receive `OnHeader` policies to inspect metadata and reject before chunk storage is allocated.
+- Rejected-transfer observability with `OnRejected`, so policy and limit rejects can be logged without changing transport behavior.
 - Useful for basic addons, advanced systems, admin tools, anticheat systems, AI telemetry, save systems, and file-like transfers.
 
 ## Installation
@@ -178,6 +180,7 @@ Receive callbacks get `(ply, ...)` on the server and `(...)` on the client. `Sen
 | `Respond (name, policy, cb)` | The other end of a `Request`. |
 | `Replicate / OnReplicated / GetReplicated` | Server owns a value current and future clients should cache. |
 | `IsReady / OnReady / SendWhenReady` | Server-side helpers for join-time sends that must wait until the client is actually ready. |
+| `OnRejected (callback)` | Observe inbound transfers rejected by receive policies or safety limits. |
 | `Receive (name, [policy], cb)` | Register a handler, optionally with safety limits. |
 | `GetTransfer / GetTransfers` | Inspect running outgoing transfers (for UI/debug). |
 | `Cancel / CancelAll` | Stop running outgoing transfers. |
@@ -298,6 +301,30 @@ end)
 | `OnHeader` | Optional early callback. Return `false, reason` to reject after metadata is validated but before chunk storage is allocated. |
 
 The transport can prove a payload arrived intact; it cannot decide whether the player was allowed to send it. Always keep your own permission and sanity checks.
+
+## Rejected transfers
+
+`OnRejected` observes inbound transfers that StreamNet rejects before your receive handler runs. It is passive: it does not punish, kick, cancel extra transfers, change retries, or replace receive policies.
+
+```lua
+ChrononLabsStreamNet.OnRejected (function (ply, info)
+    print ("Rejected:", info.Name, info.Rule, info.Reason)
+end)
+```
+
+On the server, `ply` is the player who sent the rejected transfer. On the client, `ply` is `nil` because the inbound transfer came from the server. Treat `info` as read-only; the same table is passed to every registered `OnRejected` callback for that event.
+
+Common `info` fields:
+
+| Field | Meaning |
+| --- | --- |
+| `Name` | Message name from the rejected transfer header. |
+| `Id` | Transfer id from the rejected transfer header. |
+| `Rule` | Short reject code such as `Cooldown`, `MaxBytes`, `RequireReady`, `NoReceiver`, or `OnHeader`. |
+| `Reason` | Human-readable reject reason. |
+| `Direction` | `client_to_server` on the server, `server_to_client` on the client. |
+| `RawSize` / `PackedSize` | Declared payload sizes from the header. |
+| `TotalChunks` | Declared chunk count from the header. |
 
 ## Profiles
 

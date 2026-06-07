@@ -101,7 +101,6 @@ local utilDecompress   = util.Decompress
 local netStart         = net.Start
 local netSend          = net.Send
 local netSendToServer  = net.SendToServer
-local netReceive       = net.Receive
 local netWriteUInt     = net.WriteUInt
 local netReadUInt      = net.ReadUInt
 local netWriteBool     = net.WriteBool
@@ -192,6 +191,7 @@ library.AckPending          = library.AckPending or {}
 library.NackPending         = library.NackPending or {}
 library.ReadyPlayers        = library.ReadyPlayers or {}
 library.ReadyCallbacks      = library.ReadyCallbacks or {}
+library.RejectedCallbacks   = library.RejectedCallbacks or {}
 library.PlayersByUserId     = library.PlayersByUserId or {}
 library.Profiles            = library.Profiles or {}
 library.ReplicatedValues    = library.ReplicatedValues or {}
@@ -2503,6 +2503,20 @@ local function resendFinishedControl (peer, transferId, finished, sequence, curr
 	end
 end
 
+local function emitRejected (peer, info)
+	if not next (library.RejectedCallbacks) then return end
+
+	info.Direction = SERVER and "client_to_server" or "server_to_client"
+
+	for callbackIndex, callback in ipairs (library.RejectedCallbacks) do
+		local callbackOk, callbackError = pcall (callback, peer, info)
+
+		if not callbackOk then
+			ErrorNoHalt ("(ChrononLabs-StreamNet): OnRejected error: " .. tostring (callbackError) .. ". Fix the OnRejected callback.\n")
+		end
+	end
+end
+
 local function onHeaderPacket (peer)
 	local currentTime   = now ()
 	local transferId    = readNetUnsigned32 ()
@@ -2516,7 +2530,19 @@ local function onHeaderPacket (peer)
 
 	if name == "" or #name > 128 then return end
 	if payloadMode ~= modeArguments and payloadMode ~= modeRaw then return end
-	if rawSize > config.MaximumPayloadBytes or packedSize > config.MaximumPayloadBytes then return end
+	if rawSize > config.MaximumPayloadBytes or packedSize > config.MaximumPayloadBytes then
+		emitRejected (peer, {
+			Name        = name,
+			Id          = transferId,
+			Rule        = "MaximumPayloadBytes",
+			Reason      = "(ChrononLabs-StreamNet): Payload byte limit exceeded. Increase MaximumPayloadBytes or send less data.",
+			RawSize     = rawSize,
+			PackedSize  = packedSize,
+			TotalChunks = totalChunks
+		})
+
+		return
+	end
 	if totalChunks < 1 or totalChunks > maximumChunksForPackedSize (packedSize) then return end
 
 	local key = peerKey (peer)
@@ -2530,6 +2556,15 @@ local function onHeaderPacket (peer)
 
 		return
 	elseif finished then
+		emitRejected (peer, {
+			Name        = name,
+			Id          = transferId,
+			Rule        = "MetadataMismatch",
+			Reason      = "(ChrononLabs-StreamNet): Metadata mismatch. Make sure transfer IDs are not reused with different metadata.",
+			RawSize     = rawSize,
+			PackedSize  = packedSize,
+			TotalChunks = totalChunks
+		})
 		sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): Metadata mismatch. Make sure transfer IDs are not reused with different metadata.", currentTime)
 
 		return
@@ -2549,12 +2584,30 @@ local function onHeaderPacket (peer)
 	end
 
 	if not library.Handlers [messageLowerName] then
+		emitRejected (peer, {
+			Name        = name,
+			Id          = transferId,
+			Rule        = "NoReceiver",
+			Reason      = "(ChrononLabs-StreamNet): No receiver registered for this message.",
+			RawSize     = rawSize,
+			PackedSize  = packedSize,
+			TotalChunks = totalChunks
+		})
 		sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): No receiver registered for this message.", currentTime)
 
 		return
 	end
 
 	if (library.IncomingCounts [key] or 0) >= config.MaximumIncomingTransfersPerPeer then
+		emitRejected (peer, {
+			Name        = name,
+			Id          = transferId,
+			Rule        = "MaximumIncomingTransfersPerPeer",
+			Reason      = "(ChrononLabs-StreamNet): Too many incoming transfers. Increase MaximumIncomingTransfersPerPeer or send fewer concurrent transfers.",
+			RawSize     = rawSize,
+			PackedSize  = packedSize,
+			TotalChunks = totalChunks
+		})
 		sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): Too many incoming transfers. Increase MaximumIncomingTransfersPerPeer or send fewer concurrent transfers.", currentTime)
 		return
 	end
@@ -2562,42 +2615,114 @@ local function onHeaderPacket (peer)
 	local maximumIncomingBytes = tonumber (config.MaximumIncomingBytesPerPeer)
 
 	if maximumIncomingBytes and maximumIncomingBytes > 0 and (library.IncomingBytes [key] or 0) + packedSize > maximumIncomingBytes then
+		emitRejected (peer, {
+			Name        = name,
+			Id          = transferId,
+			Rule        = "MaximumIncomingBytesPerPeer",
+			Reason      = "(ChrononLabs-StreamNet): Too much incoming data in flight. Increase MaximumIncomingBytesPerPeer or wait for active transfers to finish.",
+			RawSize     = rawSize,
+			PackedSize  = packedSize,
+			TotalChunks = totalChunks
+		})
 		sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): Too much incoming data in flight. Increase MaximumIncomingBytesPerPeer or wait for active transfers to finish.", currentTime)
 		return
 	end
 
 	if policy then
 		if (SERVER and policy.Direction == "server_to_client") or (CLIENT and policy.Direction == "client_to_server") then
+			emitRejected (peer, {
+				Name        = name,
+				Id          = transferId,
+				Rule        = "Direction",
+				Reason      = "(ChrononLabs-StreamNet): Receive policy direction rejected this transfer. Verify the message Direction matches the sender side.",
+				RawSize     = rawSize,
+				PackedSize  = packedSize,
+				TotalChunks = totalChunks
+			})
 			sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): Receive policy direction rejected this transfer. Verify the message Direction matches the sender side.", currentTime)
 			return
 		end
 
 		if SERVER and policy.RequireReady and isPlayerValue (peer) and library.ReadyPlayers [peer:UserID ()] ~= true then
+			emitRejected (peer, {
+				Name        = name,
+				Id          = transferId,
+				Rule        = "RequireReady",
+				Reason      = "(ChrononLabs-StreamNet): Receive policy requires the client to be ready. Wait until the client finishes joining before sending.",
+				RawSize     = rawSize,
+				PackedSize  = packedSize,
+				TotalChunks = totalChunks
+			})
 			sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): Receive policy requires the client to be ready. Wait until the client finishes joining before sending.", currentTime)
 			return
 		end
 
 		if not policyUsergroupAllowed (peer, policy) then
+			emitRejected (peer, {
+				Name        = name,
+				Id          = transferId,
+				Rule        = "RequireUsergroup",
+				Reason      = "(ChrononLabs-StreamNet): Receive policy usergroup rejected this transfer. Check RequireUsergroup before sending this message.",
+				RawSize     = rawSize,
+				PackedSize  = packedSize,
+				TotalChunks = totalChunks
+			})
 			sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): Receive policy usergroup rejected this transfer. Check RequireUsergroup before sending this message.", currentTime)
 			return
 		end
 
 		if policy.MaxBytes and rawSize > policy.MaxBytes then
+			emitRejected (peer, {
+				Name        = name,
+				Id          = transferId,
+				Rule        = "MaxBytes",
+				Reason      = "(ChrononLabs-StreamNet): Receive policy byte limit exceeded. Increase MaxBytes or send less data.",
+				RawSize     = rawSize,
+				PackedSize  = packedSize,
+				TotalChunks = totalChunks
+			})
 			sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): Receive policy byte limit exceeded. Increase MaxBytes or send less data.", currentTime)
 			return
 		end
 
 		if policy.MaxInFlight and bucket and countIncomingByName (bucket, messageLowerName) >= policy.MaxInFlight then
+			emitRejected (peer, {
+				Name        = name,
+				Id          = transferId,
+				Rule        = "MaxInFlight",
+				Reason      = "(ChrononLabs-StreamNet): Receive policy in-flight limit exceeded. Increase MaxInFlight or wait for the previous transfer to finish.",
+				RawSize     = rawSize,
+				PackedSize  = packedSize,
+				TotalChunks = totalChunks
+			})
 			sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): Receive policy in-flight limit exceeded. Increase MaxInFlight or wait for the previous transfer to finish.", currentTime)
 			return
 		end
 
 		if policyCooldownActive (key, messageLowerName, policy, currentTime) then
+			emitRejected (peer, {
+				Name        = name,
+				Id          = transferId,
+				Rule        = "Cooldown",
+				Reason      = "(ChrononLabs-StreamNet): Receive policy cooldown active. Wait before sending this message again.",
+				RawSize     = rawSize,
+				PackedSize  = packedSize,
+				TotalChunks = totalChunks
+			})
 			sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): Receive policy cooldown active. Wait before sending this message again.", currentTime)
 			return
 		end
 
 		if policyWindowActive (key, messageLowerName, policy, currentTime) then
+			emitRejected (peer, {
+				Name        = name,
+				Id          = transferId,
+				Rule        = "MaxPerWindow",
+				Reason      = "(ChrononLabs-StreamNet): Receive policy window limit active. Wait before sending this message again.",
+				RawSize     = rawSize,
+				PackedSize  = packedSize,
+				TotalChunks = totalChunks
+			})
 			sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): Receive policy window limit active. Wait before sending this message again.", currentTime)
 			return
 		end
@@ -2625,11 +2750,29 @@ local function onHeaderPacket (peer)
 
 			if not callbackOk then
 				ErrorNoHalt ("(ChrononLabs-StreamNet): OnHeader error for " .. name .. ": " .. tostring (accepted) .. ". Fix the receive policy for this message.\n")
+				emitRejected (peer, {
+					Name        = name,
+					Id          = transferId,
+					Rule        = "OnHeaderError",
+					Reason      = "(ChrononLabs-StreamNet): Receive policy OnHeader errored. Fix the receiver before retrying.",
+					RawSize     = rawSize,
+					PackedSize  = packedSize,
+					TotalChunks = totalChunks
+				})
 				sendHeaderRejectCancel (peer, key, transferId, "(ChrononLabs-StreamNet): Receive policy OnHeader errored. Fix the receiver before retrying.", currentTime)
 				return
 			end
 
 			if accepted == false then
+				emitRejected (peer, {
+					Name        = name,
+					Id          = transferId,
+					Rule        = "OnHeader",
+					Reason      = tostring (rejectReason or "(ChrononLabs-StreamNet): Receive policy OnHeader rejected this transfer."),
+					RawSize     = rawSize,
+					PackedSize  = packedSize,
+					TotalChunks = totalChunks
+				})
 				sendHeaderRejectCancel (peer, key, transferId, tostring (rejectReason or "(ChrononLabs-StreamNet): Receive policy OnHeader rejected this transfer."), currentTime)
 				return
 			end
@@ -2901,7 +3044,7 @@ local function onReadyPacket (peer)
 	end
 end
 
-netReceive (channelName, function (length, ply)
+net.Receive (channelName, function (length, ply)
 	local peer       = CLIENT and nil or ply
 	local packetKind = netReadUInt (4)
 	local version    = netReadUInt (4)
@@ -3468,6 +3611,20 @@ function library.OnReady (callback)
 	end
 
 	library.ReadyCallbacks [#library.ReadyCallbacks + 1] = callback
+
+	return library
+end
+
+function library.OnRejected (callback)
+	assert (type (callback) == "function", "(ChrononLabs-StreamNet): OnRejected callback must be a function.")
+
+	for callbackIndex, existingCallback in ipairs (library.RejectedCallbacks) do
+		if existingCallback == callback then
+			return library
+		end
+	end
+
+	library.RejectedCallbacks [#library.RejectedCallbacks + 1] = callback
 
 	return library
 end
